@@ -1,0 +1,39 @@
+<Project>
+  <PropertyGroup>
+    <!-- Package Information -->
+    <PackageId>$(AssemblyName)</PackageId>
+    <Version>0.0.1</Version>
+    <Authors>Elyfe Innovations</Authors>
+    <Company>Elyfe Innovations</Company>
+    <Product>Elyfe.Orleans.Marten.Persistence</Product>
+    <Description>Orleans persistence provider for Marten.</Description>
+    <Copyright>Copyright © Elyfe Innovations 2025</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://elyfe.net</PackageProjectUrl>
+    <RepositoryUrl>https://elyfe.net</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>orleans;marten;persistence;orleans-providers;</PackageTags>
+    <PackageReleaseNotes>Initial release.</PackageReleaseNotes>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+
+    <!-- Build Settings -->
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Packability Settings -->
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\README.md" Pack="true" PackagePath="\"/>
+    <None Include="$(MSBuildThisFileDirectory)..\icon.png" Pack="true" PackagePath="\"/>
+    <None Include="$(MSBuildThisFileDirectory)..\LICENSE" Pack="true" PackagePath=""/>
+  </ItemGroup>
+</Project>
