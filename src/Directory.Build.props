@@ -10,7 +10,7 @@
     <Copyright>Copyright © Elyfe Innovations 2025</Copyright>
     
     <PackageProjectUrl>https://elyfe.net</PackageProjectUrl>
-    <RepositoryUrl>https://elyfe.net</RepositoryUrl>
+    <RepositoryUrl>https://github.com/Elyfe-Innovations/Elyfe.Orleans.Marten.Persistence.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>orleans;marten;persistence;orleans-providers;</PackageTags>
     <PackageReleaseNotes>Initial release.</PackageReleaseNotes>
