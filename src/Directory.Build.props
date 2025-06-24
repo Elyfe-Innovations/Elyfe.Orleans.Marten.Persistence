@@ -2,13 +2,13 @@
   <PropertyGroup>
     <!-- Package Information -->
     <PackageId>$(AssemblyName)</PackageId>
-    <Version>0.0.1</Version>
+    
     <Authors>Elyfe Innovations</Authors>
     <Company>Elyfe Innovations</Company>
     <Product>Elyfe.Orleans.Marten.Persistence</Product>
     <Description>Orleans persistence provider for Marten.</Description>
     <Copyright>Copyright © Elyfe Innovations 2025</Copyright>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    
     <PackageProjectUrl>https://elyfe.net</PackageProjectUrl>
     <RepositoryUrl>https://elyfe.net</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
