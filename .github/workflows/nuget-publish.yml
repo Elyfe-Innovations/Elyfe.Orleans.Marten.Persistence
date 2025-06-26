@@ -40,8 +40,10 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore Elyfe.Orleans.Marten.Persistence.slnx
 
-      - name: Pack
-        run: dotnet pack --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }} Elyfe.Orleans.Marten.Persistence.slnx
+      - name: Pack Projects
+        run: |
+          dotnet pack src/Elyfe.Orleans.Marten.Persistence/Elyfe.Orleans.Marten.Persistence.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }}
+          dotnet pack src/Elyfe.Analyzers.Orleans.MartenSchema/Elyfe.Analyzers.Orleans.MartenSchema.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }}
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
