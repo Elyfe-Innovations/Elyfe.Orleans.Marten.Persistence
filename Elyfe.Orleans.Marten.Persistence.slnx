@@ -1,5 +1,9 @@
 <Solution>
     <Folder Name="/src/">
+        <Project Path="src/Elyfe.Analyzers.Orleans.MartenSchema/Elyfe.Analyzers.Orleans.MartenSchema.csproj" />
         <Project Path="src/Elyfe.Orleans.Marten.Persistence/Elyfe.Orleans.Marten.Persistence.csproj" />
+    </Folder>
+    <Folder Name="/test/">
+        <Project Path="test/Elyfe.Analyzers.Orleans.MartenSchema.Tests/Elyfe.Analyzers.Orleans.MartenSchema.Tests.csproj" />
     </Folder>
 </Solution>

@@ -8,21 +8,25 @@ namespace Elyfe.Analyzers.Orleans.MartenSchema.Tests;
 
 public class MartenGrainSchemaAnalyzerTests
 {
-    private const string TestCodeTemplate = @"
+    private const string TestCodeTemplate = """
     using System;
 
     // Dummy attributes and interfaces to simulate Orleans environment
     [AttributeUsage(AttributeTargets.Parameter)]
     public class PersistentStateAttribute : Attribute {
-        public PersistentStateAttribute(string storageName) { StorageName = storageName; }
+        public PersistentStateAttribute(string stateName,string storageName = "Default") { StorageName = storageName; StateName = stateName; }
         public string StorageName { get; }
+        public string StateName { get; }
     }
 
     [AttributeUsage(AttributeTargets.Parameter)]
     public class OtherAttribute : Attribute { }
 
     public interface IPersistentState<T> { T State { get; set; } }
-    public interface IServiceCollection { }
+    public interface IServiceCollection {}
+    public interface ISiloBuilder {
+        public ISiloBuilder ConfigureServices(Action<IServiceCollection> configureServices);
+    }
 
     // Dummy types for test
     public class MyState {}
@@ -34,6 +38,7 @@ public class MartenGrainSchemaAnalyzerTests
     // Dummy extension method for registration
     public static class MartenSiloBuilderExtensions {
         public static IServiceCollection AddMartenGrainStorage(this IServiceCollection services, string storageName) => services;
+        public static ISiloBuilder AddMartenGrainStorageAsDefault(this ISiloBuilder builder) => builder;
     }
 
     public static class Startup {
@@ -49,7 +54,7 @@ public class MartenGrainSchemaAnalyzerTests
     public class Grain {
         public Grain({{GrainParameters}}) {}
     }
-    ";
+    """;
 
     [Fact]
     public async Task ReportsDiagnostic_WhenMartenGrainDataForStateTypeNotRegistered()
@@ -57,10 +62,10 @@ public class MartenGrainSchemaAnalyzerTests
         var testCode = TestCodeTemplate
             .Replace("{{StorageRegistrations}}", "services.AddMartenGrainStorage(\"Marten\");")
             .Replace("{{SchemaRegistrations}}", "") // No schema registration
-            .Replace("{{GrainParameters}}", "[PersistentState(\"Marten\")] IPersistentState<MyState> state");
+            .Replace("{{GrainParameters}}", "[PersistentState(\"state\", \"Marten\")] IPersistentState<MyState> state");
 
         var expectedError = Verify.Diagnostic(MartenGrainSchemaAnalyzer.DiagnosticId)
-            .WithSpan(40, 76, 40, 81)
+            .WithSpan(44, 81, 44, 86)
             .WithArguments("MyState", "Marten");
 
         await Verify.VerifyAnalyzerAsync(testCode, expectedError);
@@ -72,7 +77,7 @@ public class MartenGrainSchemaAnalyzerTests
         var testCode = TestCodeTemplate
             .Replace("{{StorageRegistrations}}", "services.AddMartenGrainStorage(\"Marten\");")
             .Replace("{{SchemaRegistrations}}", "options.Schema.For<MartenGrainData<MyState>>();")
-            .Replace("{{GrainParameters}}", "[PersistentState(\"Marten\")] IPersistentState<MyState> state");
+            .Replace("{{GrainParameters}}", "[PersistentState(\"state\", \"Marten\")] IPersistentState<MyState> state");
 
         await Verify.VerifyAnalyzerAsync(testCode);
     }
@@ -94,10 +99,10 @@ public class MartenGrainSchemaAnalyzerTests
         var testCode = TestCodeTemplate
             .Replace("{{StorageRegistrations}}", "services.AddMartenGrainStorage(\"MyMartenStorage\");")
             .Replace("{{SchemaRegistrations}}", "") // No schema registration
-            .Replace("{{GrainParameters}}", "[PersistentState(\"MyMartenStorage\")] IPersistentState<MyState> state");
+            .Replace("{{GrainParameters}}", "[PersistentState(\"state\",\"MyMartenStorage\")] IPersistentState<MyState> state");
 
         var expectedError = Verify.Diagnostic(MartenGrainSchemaAnalyzer.DiagnosticId)
-            .WithSpan(40, 85, 40, 90)
+            .WithSpan(44, 89, 44, 94)
             .WithArguments("MyState", "MyMartenStorage");
 
         await Verify.VerifyAnalyzerAsync(testCode, expectedError);
@@ -131,7 +136,7 @@ public class MartenGrainSchemaAnalyzerTests
         var testCode = TestCodeTemplate
             .Replace("{{StorageRegistrations}}", "services.AddMartenGrainStorage(\"Marten\");")
             .Replace("{{SchemaRegistrations}}", "")
-            .Replace("{{GrainParameters}}", "[PersistentState(\"Marten\")] MyState state");
+            .Replace("{{GrainParameters}}", "[PersistentState(\"state\", \"Marten\")] MyState state");
 
         await Verify.VerifyAnalyzerAsync(testCode);
     }
@@ -140,13 +145,13 @@ public class MartenGrainSchemaAnalyzerTests
     public async Task ReportsDiagnostic_WhenDefaultMartenStorageProvider_And_NoSchemaRegistration()
     {
         var testCode = TestCodeTemplate
-            .Replace("{{StorageRegistrations}}", "services.AddMartenGrainStorage(\"Marten\");")
+            .Replace("{{StorageRegistrations}}", "services.AddMartenGrainStorage(\"Default\");")
             .Replace("{{SchemaRegistrations}}", "") // No schema registration
-            .Replace("{{GrainParameters}}", "[PersistentState(\"Marten\")] IPersistentState<MyState> state");
+            .Replace("{{GrainParameters}}", "[PersistentState(\"state\")] IPersistentState<MyState> state");
 
         var expectedError = Verify.Diagnostic(MartenGrainSchemaAnalyzer.DiagnosticId)
-            .WithSpan(40, 76, 40, 81)
-            .WithArguments("MyState", "Marten");
+            .WithSpan(44, 71, 44, 76)
+            .WithArguments("MyState", "Default");
 
         await Verify.VerifyAnalyzerAsync(testCode, expectedError);
     }
@@ -157,7 +162,7 @@ public class MartenGrainSchemaAnalyzerTests
         var testCode = TestCodeTemplate
             .Replace("{{StorageRegistrations}}", "services.AddMartenGrainStorage(\"Marten\");")
             .Replace("{{SchemaRegistrations}}", "options.Schema.For<MartenGrainData<MyState>>();")
-            .Replace("{{GrainParameters}}", "[PersistentState(\"Marten\")] IPersistentState<MyState> state");
+            .Replace("{{GrainParameters}}", "[PersistentState(\"state\")] IPersistentState<MyState> state");
 
         await Verify.VerifyAnalyzerAsync(testCode);
     }

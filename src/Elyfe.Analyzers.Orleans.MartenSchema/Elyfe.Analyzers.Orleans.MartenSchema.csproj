@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <IsRoslynAnalyzer>true</IsRoslynAnalyzer>
+        <LangVersion>latest</LangVersion>
+        <AssemblyName>Elyfe.Analyzers.Orleans.MartenSchema</AssemblyName>
+        <RootNamespace>Elyfe.Analyzers.Orleans.MartenSchema</RootNamespace>
+        <Nullable>enable</Nullable>
+        <PackageSummary>A Roslyn analyzer to ensure Marten schema registrations for Orleans grain state.</PackageSummary>
+        <Description>This analyzer checks that for every grain constructor parameter of type IPersistentState&lt;T&gt; with the [PersistentState("Marten")] attribute, there is a corresponding MartenGrainData&lt;T&gt; registration in the Marten setup. This helps prevent runtime errors due to missing schema configurations.</Description>
+        <PackageTags>$(PackageTags);roslyn;analyzer;orleans-analyzers</PackageTags>
+        <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    </PropertyGroup>
+    
+    <ItemGroup>
+        <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="4.14.0">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+        <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="9.0.0" />
+    </ItemGroup>
+    <ItemGroup>
+      <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+      <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    </ItemGroup>
+</Project>

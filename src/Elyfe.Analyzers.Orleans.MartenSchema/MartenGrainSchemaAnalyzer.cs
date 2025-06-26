@@ -15,7 +15,7 @@ public class MartenGrainSchemaAnalyzer : DiagnosticAnalyzer
     private static readonly LocalizableString Title = "MartenGrainData schema missing for state type";
 
     private static readonly LocalizableString MessageFormat =
-        "MartenGrainData<{0}> is not registered in Marten setup for parameter type '{0}' using Marten storage '{1}'";
+        "MartenGrainData<{0}> is not registered in Marten setup for parameter type '{0}' using Marten storage '{}'";
 
     private static readonly LocalizableString Description =
         "For parameters P using a Marten storage provider, the type MartenGrainData<P> must be registered using For<MartenGrainData<P>>() in Marten setup.";
@@ -92,20 +92,16 @@ public class MartenGrainSchemaAnalyzer : DiagnosticAnalyzer
                 martenStorageNames.Add(storageName);
             }
         }
-
+        // Check for AddMartenGrainStorageAsDefault
         if (methodSymbol.Name == "AddMartenGrainStorageAsDefault" &&
             methodSymbol.IsExtensionMethod &&
             methodSymbol.Parameters.Length == 0 &&
-            invocation.ArgumentList.Arguments.Count == 1 &&
-            invocation.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax defaultLiteral &&
-            defaultLiteral.IsKind(SyntaxKind.StringLiteralExpression)
-           )
+            invocation.ArgumentList.Arguments.Count == 0)
         {
             if(!martenStorageNames.Contains("Default"))
             {
                 martenStorageNames.Add("Default");
             }
-            
         }
         // Check for Schema.For<MartenGrainData<T>>()
         if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
@@ -139,8 +135,8 @@ public class MartenGrainSchemaAnalyzer : DiagnosticAnalyzer
         var persistentStateAttr = parameterSymbol.GetAttributes().FirstOrDefault(attr =>
             SymbolEqualityComparer.Default.Equals(attr.AttributeClass?.OriginalDefinition, persistentStateAttributeSymbol));
 
-        if (persistentStateAttr?.ConstructorArguments.Length == 1 &&
-            persistentStateAttr.ConstructorArguments[0].Value is string storageName)
+        if (persistentStateAttr?.ConstructorArguments.Length == 2 &&
+            persistentStateAttr.ConstructorArguments[1].Value is string storageName)
         {
             if (parameterSymbol.Type is INamedTypeSymbol { IsGenericType: true } persistentStateType &&
                 SymbolEqualityComparer.Default.Equals(persistentStateType.OriginalDefinition, iPersistentStateSymbol))

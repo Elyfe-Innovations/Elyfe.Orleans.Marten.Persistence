@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using JasperFx;
 using Marten;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orleans;
@@ -16,11 +17,12 @@ public class MartenGrainStorage(
     string storageName,
     IDocumentStore documentStore,
     ILogger<MartenGrainStorage> logger,
-    IOptions<ClusterOptions> clusterOptions)
+    IOptions<ClusterOptions> clusterOptions,
+    IHostEnvironment environment)
     : IGrainStorage, ILifecycleParticipant<ISiloLifecycle>
 {
     private readonly string _clusterService = clusterOptions.Value.ServiceId;
-    
+
     public async Task ClearStateAsync<T>(string grainType, GrainId grainReference, IGrainState<T> grainState)
     {
         if (logger.IsEnabled(LogLevel.Trace))
@@ -48,17 +50,30 @@ public class MartenGrainStorage(
 
             if (document != null)
             {
+                
                 grainState.State = document.Data;
                 grainState.RecordExists = true;
                 grainState.ETag = GenerateETag(document); // Generate the ETag from the state.
             }
             else
             {
-                #pragma warning disable CS8601 // Possible null reference assignment.
-                grainState.State = default;
+                //Try with the old Id for Backward compatibility
+                var oldId = $"{grainId}";
+                document = await session.LoadAsync<MartenGrainData<T>>(oldId);
+                if (document != null)
+                {
+                    grainState.State = document.Data;
+                    grainState.RecordExists = true;
+                    grainState.ETag = GenerateETag(document); // Generate the ETag from the state.
+                }
+                else
+                {
+#pragma warning disable CS8601 // Possible null reference assignment.
+                    grainState.State = default;
 #pragma warning restore CS8601 // Possible null reference assignment.
-                grainState.RecordExists = false;
-                grainState.ETag = null;
+                    grainState.RecordExists = false;
+                    grainState.ETag = null;
+                }
             }
         }
         catch (Exception ex)
@@ -73,7 +88,7 @@ public class MartenGrainStorage(
         if (logger.IsEnabled(LogLevel.Trace))
             logger.LogTrace($"Writing state for grain {grainId} of type {grainType}.");
 
-        var id = grainId.ToString();
+        var id = GenerateId(grainId);
 
         var state = MartenGrainData<T>.Create(grainState.State, id);
 
@@ -103,14 +118,13 @@ public class MartenGrainStorage(
             async ct =>
             {
                 logger.LogInformation("Adding Migrations");
-                //if (environment.IsDevelopment())
-                //{
-                documentStore.Options.DatabaseSchemaName = storageName;
-                await documentStore.Storage.Database.WriteMigrationFileAsync("1.Hello.sql", ct);
-                await documentStore.Storage
-                    .ApplyAllConfiguredChangesToDatabaseAsync(AutoCreate
-                        .All); //RM for Production and use Marten migrations
-                //}
+                if (environment.IsDevelopment())
+                {
+                    documentStore.Options.DatabaseSchemaName = storageName;
+                    await documentStore.Storage
+                        .ApplyAllConfiguredChangesToDatabaseAsync(AutoCreate
+                            .All); //RM for Production and use Marten migrations
+                }
             });
     }
 
@@ -120,5 +134,9 @@ public class MartenGrainStorage(
         var lastModified = state.LastModified.ToUnixTimeMilliseconds();
         var hash = SHA256.Create().ComputeHash(Encoding.UTF8.GetBytes(lastModified.ToString()));
         return Convert.ToBase64String(hash);
+    }
+    private string GenerateId(GrainId grainId)
+    {
+        return $"{_clusterService}_{grainId}";
     }
 }

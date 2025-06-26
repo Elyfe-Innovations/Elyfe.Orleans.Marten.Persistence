@@ -8,10 +8,7 @@ namespace Elyfe.Orleans.Marten.Persistence.Extensions;
 
 public static class MartenSiloBuilderExtensions
 {
-    public static ISiloBuilder AddMartenGrainStorageAsDefault(this ISiloBuilder builder)
-    {
-        return builder.UseMartenGrainStorage(ProviderConstants.DEFAULT_STORAGE_PROVIDER_NAME);
-    }
+    public static ISiloBuilder AddMartenGrainStorageAsDefault(this ISiloBuilder builder) => builder.UseMartenGrainStorage(ProviderConstants.DEFAULT_STORAGE_PROVIDER_NAME);
 
     public static ISiloBuilder UseMartenGrainStorage(this ISiloBuilder siloBuilder, string storageName = "Marten")
     {
