@@ -23,14 +23,14 @@ public class MartenGrainStorage(
 {
     private readonly string _clusterService = clusterOptions.Value.ServiceId;
 
-    public async Task ClearStateAsync<T>(string grainType, GrainId grainReference, IGrainState<T> grainState)
+    public async Task ClearStateAsync<T>(string grainType, GrainId grainId, IGrainState<T> grainState)
     {
         if (logger.IsEnabled(LogLevel.Trace))
-            logger.LogTrace($"Clearing state for grain {grainReference} of type {grainType}.");
+            logger.LogTrace($"Clearing state for grain {grainId} of type {grainType}.");
 
         await using var session = documentStore.LightweightSession();
 
-        var id = grainReference.ToString();
+        var id = GenerateId(grainId) ?? grainId.ToString();
 
         session.Delete<MartenGrainData<T>>(id);
         await session.SaveChangesAsync();
@@ -90,15 +90,24 @@ public class MartenGrainStorage(
 
         var id = GenerateId(grainId);
 
+        // If we have an existing record, validate ETag for optimistic concurrency
+        if (grainState.RecordExists && grainState.ETag != null)
+        {
+            await using var readSession = documentStore.QuerySession();
+            var existingDocument = await readSession.LoadAsync<MartenGrainData<T>>(id);
+            
+            if (existingDocument != null)
+            {
+                var currentETag = GenerateETag(existingDocument);
+                if (grainState.ETag != currentETag)
+                {
+                    throw new InconsistentStateException($"ETag mismatch for grain {grainId}. Expected: {grainState.ETag}, Actual: {currentETag}");
+                }
+            }
+        }
+
         var state = MartenGrainData<T>.Create(grainState.State, id);
-
         var newETag = GenerateETag(state);
-
-        // Optional: Implement optimistic concurrency check using ETag.
-        // if (grainState.ETag != null && grainState.ETag != newETag)
-        // {
-        //     throw new InconsistentStateException($"ETag mismatch for grain {grainId.ToString()}.");
-        // }
 
         await using var session = documentStore.LightweightSession();
         if (grainState.State is not null)
@@ -130,10 +139,14 @@ public class MartenGrainStorage(
 
     private static string GenerateETag<T>(MartenGrainData<T> state)
     {
-        //Generate Etag with LastModified
+        // Generate ETag with LastModified and data hash for better collision resistance
         var lastModified = state.LastModified.ToUnixTimeMilliseconds();
-        var hash = SHA256.Create().ComputeHash(Encoding.UTF8.GetBytes(lastModified.ToString()));
-        return Convert.ToBase64String(hash);
+        var dataJson = System.Text.Json.JsonSerializer.Serialize(state.Data);
+        var combined = $"{lastModified}_{dataJson}";
+        
+        using var hash = SHA256.Create();
+        var hashBytes = hash.ComputeHash(Encoding.UTF8.GetBytes(combined));
+        return Convert.ToBase64String(hashBytes);
     }
     private string GenerateId(GrainId grainId)
     {
