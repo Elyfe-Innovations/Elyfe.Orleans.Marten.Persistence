@@ -5,5 +5,6 @@
     </Folder>
     <Folder Name="/test/">
         <Project Path="test/Elyfe.Analyzers.Orleans.MartenSchema.Tests/Elyfe.Analyzers.Orleans.MartenSchema.Tests.csproj" />
+        <Project Path="test/Elyfe.Orleans.Marten.Persistence.Tests/Elyfe.Orleans.Marten.Persistence.Tests.csproj" />
     </Folder>
 </Solution>

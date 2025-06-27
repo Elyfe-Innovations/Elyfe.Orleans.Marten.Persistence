@@ -9,7 +9,6 @@ using Orleans;
 using Orleans.Configuration;
 using Orleans.Runtime;
 using Orleans.Storage;
-using Weasel.Core.Migrations;
 
 namespace Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 
@@ -30,7 +29,7 @@ public class MartenGrainStorage(
 
         await using var session = documentStore.LightweightSession();
 
-        var id = GenerateId(grainId) ?? grainId.ToString();
+        var id = GenerateId(grainId);
 
         session.Delete<MartenGrainData<T>>(id);
         await session.SaveChangesAsync();
@@ -45,7 +44,7 @@ public class MartenGrainStorage(
 
 
             await using var session = documentStore.QuerySession();
-            var id = grainId.ToString();
+            var id = GenerateId(grainId);
             var document = await session.LoadAsync<MartenGrainData<T>>(id);
 
             if (document != null)
@@ -58,7 +57,7 @@ public class MartenGrainStorage(
             else
             {
                 //Try with the old Id for Backward compatibility
-                var oldId = $"{grainId}";
+                var oldId = grainId.ToString();
                 document = await session.LoadAsync<MartenGrainData<T>>(oldId);
                 if (document != null)
                 {
@@ -150,6 +149,6 @@ public class MartenGrainStorage(
     }
     private string GenerateId(GrainId grainId)
     {
-        return $"{_clusterService}_{grainId}";
+        return $"{_clusterService}_{grainId.ToString().Replace('/', '_')}";
     }
 }
