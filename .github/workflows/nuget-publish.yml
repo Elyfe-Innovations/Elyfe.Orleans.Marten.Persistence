@@ -40,6 +40,9 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore Elyfe.Orleans.Marten.Persistence.slnx
 
+      - name: Test
+        run: dotnet test --configuration Release --no-build Elyfe.Orleans.Marten.Persistence.slnx
+
       - name: Pack Projects
         run: |
           dotnet pack src/Elyfe.Orleans.Marten.Persistence/Elyfe.Orleans.Marten.Persistence.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }}
