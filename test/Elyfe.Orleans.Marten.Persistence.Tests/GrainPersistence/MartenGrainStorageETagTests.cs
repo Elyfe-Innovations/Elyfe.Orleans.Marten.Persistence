@@ -1,11 +1,7 @@
-using System;
-using System.Threading.Tasks;
+using AwesomeAssertions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
-using JasperFx;
-using JasperFx.Core;
 using Marten;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -15,19 +11,18 @@ using Orleans.Runtime;
 using Orleans.Storage;
 using Testcontainers.PostgreSql;
 using Xunit;
-using AwesomeAssertions;
 
 namespace Elyfe.Orleans.Marten.Persistence.Tests.GrainPersistence;
 
 [CollectionDefinition("Marten Storage Tests", DisableParallelization = true)]
-public class MartenStorageTestCollection { }
+public class MartenStorageTestCollection {}
 
 [Collection("Marten Storage Tests")]
 public class MartenGrainStorageETagTests : IAsyncLifetime
 {
+    private readonly PostgreSqlContainer _postgreSqlContainer;
     private IDocumentStore? _documentStore;
     private MartenGrainStorage? _storage;
-    private readonly PostgreSqlContainer _postgreSqlContainer;
 
     public MartenGrainStorageETagTests()
     {
@@ -244,10 +239,4 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         readGrainState.ETag.Should().BeNull();
         readGrainState.State.Should().BeNull();
     }
-}
-
-public class TestState
-{
-    public string Name { get; set; } = string.Empty;
-    public int Value { get; set; }
 }

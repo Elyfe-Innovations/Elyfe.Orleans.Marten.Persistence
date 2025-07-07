@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using JasperFx;
 using Marten;
 using Microsoft.Extensions.Hosting;
@@ -61,9 +62,17 @@ public class MartenGrainStorage(
                 document = await session.LoadAsync<MartenGrainData<T>>(oldId);
                 if (document != null)
                 {
-                    grainState.State = document.Data;
+                    //Migrate to new ID
+                    var newState = MartenGrainData<T>.Create(document.Data, id);
+                    await using var migrationSession = documentStore.LightweightSession();
+                    migrationSession.Store(newState);
+                    await migrationSession.SaveChangesAsync();
+                    //Delete old document
+                    migrationSession.Delete<MartenGrainData<T>>(oldId);
+                    await migrationSession.SaveChangesAsync();
+                    grainState.State = newState.Data;
                     grainState.RecordExists = true;
-                    grainState.ETag = GenerateETag(document); // Generate the ETag from the state.
+                    grainState.ETag = GenerateETag(newState); // Generate the ETag from the state.
                 }
                 else
                 {
@@ -140,13 +149,14 @@ public class MartenGrainStorage(
     {
         // Generate ETag with LastModified and data hash for better collision resistance
         var lastModified = state.LastModified.ToUnixTimeMilliseconds();
-        var dataJson = System.Text.Json.JsonSerializer.Serialize(state.Data);
+        var dataJson = JsonSerializer.Serialize(state.Data);
         var combined = $"{lastModified}_{dataJson}";
         
         using var hash = SHA256.Create();
         var hashBytes = hash.ComputeHash(Encoding.UTF8.GetBytes(combined));
         return Convert.ToBase64String(hashBytes);
     }
+
     private string GenerateId(GrainId grainId)
     {
         return $"{_clusterService}_{grainId.ToString().Replace('/', '_')}";
