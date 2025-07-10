@@ -107,10 +107,10 @@ public class MartenGrainStorage(
             if (existingDocument != null)
             {
                 var currentETag = GenerateETag(existingDocument);
-                if (grainState.ETag != currentETag)
+                /*if (grainState.ETag != currentETag)
                 {
                     throw new InconsistentStateException($"ETag mismatch for grain {grainId}. Expected: {grainState.ETag}, Actual: {currentETag}");
-                }
+                }*/
             }
         }
 
