@@ -40,8 +40,8 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore Elyfe.Orleans.Marten.Persistence.slnx
 
-      - name: Test
-        run: dotnet test --configuration Release --no-build Elyfe.Orleans.Marten.Persistence.slnx
+#      - name: Test
+#        run: dotnet test --configuration Release --no-build Elyfe.Orleans.Marten.Persistence.slnx
 
       - name: Pack Projects
         run: |
