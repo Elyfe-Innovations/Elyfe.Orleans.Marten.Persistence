@@ -29,9 +29,7 @@ public class MartenGrainStorage(
             logger.LogTrace($"Clearing state for grain {grainId} of type {grainType}.");
 
         await using var session = documentStore.LightweightSession();
-
         var id = GenerateId(grainId);
-
         session.Delete<MartenGrainData<T>>(id);
         await session.SaveChangesAsync();
     }
@@ -50,7 +48,6 @@ public class MartenGrainStorage(
 
             if (document != null)
             {
-                
                 grainState.State = document.Data;
                 grainState.RecordExists = true;
                 grainState.ETag = GenerateETag(document); // Generate the ETag from the state.
@@ -63,16 +60,7 @@ public class MartenGrainStorage(
                 if (document != null)
                 {
                     //Migrate to new ID
-                    var newState = MartenGrainData<T>.Create(document.Data, id);
-                    await using var migrationSession = documentStore.LightweightSession();
-                    migrationSession.Store(newState);
-                    await migrationSession.SaveChangesAsync();
-                    //Delete old document
-                    migrationSession.Delete<MartenGrainData<T>>(oldId);
-                    await migrationSession.SaveChangesAsync();
-                    grainState.State = newState.Data;
-                    grainState.RecordExists = true;
-                    grainState.ETag = GenerateETag(newState); // Generate the ETag from the state.
+                    await MigrateGrainStateAsync(grainState, document, id, oldId);
                 }
                 else
                 {
@@ -89,6 +77,20 @@ public class MartenGrainStorage(
             logger.LogCritical(ex, "An error occurred executing {Method}- Error {Message}", nameof(ReadStateAsync),
                 ex.Message);
         }
+    }
+
+    private async Task MigrateGrainStateAsync<T>(IGrainState<T> grainState, MartenGrainData<T> document, string id, string oldId)
+    {
+        var newState = MartenGrainData<T>.Create(document.Data, id);
+        await using var migrationSession = documentStore.LightweightSession();
+        migrationSession.Store(newState);
+        await migrationSession.SaveChangesAsync();
+        //Delete old document
+        migrationSession.Delete<MartenGrainData<T>>(oldId);
+        await migrationSession.SaveChangesAsync();
+        grainState.State = newState.Data;
+        grainState.RecordExists = true;
+        grainState.ETag = GenerateETag(newState); // Generate the ETag from the state.
     }
 
     public async Task WriteStateAsync<T>(string grainType, GrainId grainId, IGrainState<T> grainState)
