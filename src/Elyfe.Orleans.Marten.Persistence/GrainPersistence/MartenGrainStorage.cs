@@ -95,37 +95,47 @@ public class MartenGrainStorage(
 
     public async Task WriteStateAsync<T>(string grainType, GrainId grainId, IGrainState<T> grainState)
     {
-        if (logger.IsEnabled(LogLevel.Trace))
-            logger.LogTrace($"Writing state for grain {grainId} of type {grainType}.");
-
-        var id = GenerateId(grainId);
-
-        // If we have an existing record, validate ETag for optimistic concurrency
-        if (grainState.RecordExists && grainState.ETag != null)
+        try
         {
-            await using var readSession = documentStore.QuerySession();
-            var existingDocument = await readSession.LoadAsync<MartenGrainData<T>>(id);
-            
-            if (existingDocument != null)
+            if (logger.IsEnabled(LogLevel.Trace))
+                logger.LogTrace($"Writing state for grain {grainId} of type {grainType}.");
+
+            var id = GenerateId(grainId);
+
+            // If we have an existing record, validate ETag for optimistic concurrency
+            if (grainState.RecordExists && grainState.ETag != null)
             {
-                var currentETag = GenerateETag(existingDocument);
-                /*if (grainState.ETag != currentETag)
+                await using var readSession = documentStore.QuerySession();
+                var existingDocument = await readSession.LoadAsync<MartenGrainData<T>>(id);
+            
+                if (existingDocument != null)
+                {
+                    var currentETag = GenerateETag(existingDocument);
+                    /*if (grainState.ETag != currentETag)
                 {
                     throw new InconsistentStateException($"ETag mismatch for grain {grainId}. Expected: {grainState.ETag}, Actual: {currentETag}");
                 }*/
+                }
+            }
+
+            var state = MartenGrainData<T>.Create(grainState.State, id);
+            var newETag = GenerateETag(state);
+
+            await using var session = documentStore.LightweightSession();
+            if (grainState.State is not null)
+            {
+                session.Store(state);
+                await session.SaveChangesAsync();
+                grainState.ETag = newETag; // Update the ETag after successful write.
+                grainState.RecordExists = true;
             }
         }
-
-        var state = MartenGrainData<T>.Create(grainState.State, id);
-        var newETag = GenerateETag(state);
-
-        await using var session = documentStore.LightweightSession();
-        if (grainState.State is not null)
+        catch (Exception e)
         {
-            session.Store(state);
-            await session.SaveChangesAsync();
-            grainState.ETag = newETag; // Update the ETag after successful write.
-            grainState.RecordExists = true;
+            logger.LogCritical(e, "An error occurred executing {Method}- Error {Message}", nameof(WriteStateAsync),
+                e.Message);
+            // Rethrow the exception to propagate the error to the caller.
+            throw;
         }
     }
 
