@@ -44,8 +44,12 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         var clusterOptions = Options.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var hostEnvironment = new Mock<IHostEnvironment>();
         hostEnvironment.Setup(h => h.EnvironmentName).Returns("Development");
+        
+        // Create mock service provider (no cache)
+        var serviceProvider = new Mock<IServiceProvider>();
+        serviceProvider.Setup(sp => sp.GetService(typeof(IDocumentStore))).Returns(_documentStore);
 
-        _storage = new MartenGrainStorage("test", _documentStore, logger, clusterOptions, hostEnvironment.Object);
+        _storage = new MartenGrainStorage("test", _documentStore, serviceProvider.Object, logger, clusterOptions, hostEnvironment.Object);
     }
 
     public async Task DisposeAsync()

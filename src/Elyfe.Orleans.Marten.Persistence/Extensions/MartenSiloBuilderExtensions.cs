@@ -1,8 +1,14 @@
+using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Orleans.Configuration;
 using Orleans.Hosting;
 using Orleans.Providers;
 using Orleans.Runtime.Hosting;
+using StackExchange.Redis;
 
 namespace Elyfe.Orleans.Marten.Persistence.Extensions;
 
@@ -24,5 +30,62 @@ public static class MartenSiloBuilderExtensions
     public static ISiloBuilder AddMartenGrainStorage(this ISiloBuilder siloBuilder, string storageName)
     {
         return siloBuilder.ConfigureServices(services => services.AddMartenGrainStorage(storageName));
+    }
+
+    /// <summary>
+    /// Configures Redis cache and write-behind for Marten grain storage.
+    /// </summary>
+    public static ISiloBuilder AddMartenGrainStorageWithRedis(
+        this ISiloBuilder siloBuilder, 
+        string storageName,
+        Action<WriteBehindOptions>? configureOptions = null)
+    {
+        return siloBuilder.ConfigureServices((services) =>
+        {
+            // Add Marten storage
+            services.AddMartenGrainStorage(storageName);
+
+            // Configure write-behind options
+            var optionsBuilder = services.AddOptions<WriteBehindOptions>();
+            optionsBuilder.BindConfiguration("WriteBehind");
+            if (configureOptions != null)
+            {
+                optionsBuilder.Configure(configureOptions);
+            }
+
+            // Register Redis if connection string is provided
+            var redisConnectionString = siloBuilder.Configuration.GetConnectionString("cache");
+            if (!string.IsNullOrEmpty(redisConnectionString))
+            {
+                services.AddSingleton<IConnectionMultiplexer>(sp =>
+                {
+                    var config = ConfigurationOptions.Parse(redisConnectionString);
+                    return ConnectionMultiplexer.Connect(config);
+                });
+
+                // Register cache with service ID from cluster options
+                services.AddSingleton<IGrainStateCache>(sp =>
+                {
+                    var redis = sp.GetRequiredService<IConnectionMultiplexer>();
+                    var logger = sp.GetRequiredService<ILogger<RedisGrainStateCache>>();
+                    var options = sp.GetRequiredService<IOptions<WriteBehindOptions>>();
+                    var clusterOptions = sp.GetRequiredService<IOptions<ClusterOptions>>();
+                    
+                    return new RedisGrainStateCache(redis, logger, options, clusterOptions.Value.ServiceId);
+                });
+
+                // Register drainer hosted service
+                services.AddHostedService<CacheToMartenWriter>();
+            }
+            else
+            {
+                // No Redis configured - disable cache features
+                services.Configure<WriteBehindOptions>(opt =>
+                {
+                    opt.EnableReadThrough = false;
+                    opt.EnableWriteBehind = false;
+                });
+            }
+        });
     }
 }

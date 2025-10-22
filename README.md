@@ -1,77 +1,231 @@
 # Elyfe.Orleans.Marten.Persistence
 
-[![NuGet Version](https://img.shields.io/nuget/v/Elyfe.Orleans.Marten.Persistence.svg)](https://www.nuget.org/packages/Elyfe.Orleans.Marten.Persistence/)
-[![NuGet Downloads](https://img.shields.io/nuget/dt/Elyfe.Orleans.Marten.Persistence.svg)](https://www.nuget.org/packages/Elyfe.Orleans.Marten.Persistence/)
-
-An Orleans 9.x grain persistence provider that uses [Marten](https://martendb.io/) as a storage backend. This allows you to store your Orleans grain state in a PostgreSQL database with the rich features provided by Marten.
+Orleans grain storage implementation using Marten (PostgreSQL document store) with optional Redis read-through cache and write-behind overflow.
 
 ## Features
 
-* **Marten Integration**: Leverages Marten for robust and efficient data persistence in PostgreSQL.
-* **Full `IGrainStorage` Implementation**: Supports reading, writing, and clearing of grain state.
-* **Easy Configuration**: Simple `ISiloBuilder` extension methods for quick setup.
-* **Named Provider Support**: Configure multiple Marten storage providers with different names.
-* **Automatic Schema Migrations**: Automatically creates and applies database schema changes on startup, ideal for development. For production, it is recommended to use [Marten's schema migration tools](https://martendb.io/schema/migrations.html).
-* **Schema-per-Provider**: Each named provider instance operates within its own database schema, providing strong data isolation.
-* **Optimistic Concurrency**: Generates ETags to support optimistic concurrency control.
+- **Marten-backed grain storage**: Persistent grain state in PostgreSQL using Marten document store
+- **Redis read-through cache**: Optional caching layer for improved read performance
+- **Write-behind overflow**: Automatic overflow to Redis cache during write surges (>100 writes/sec)
+- **Background drainer**: Asynchronous persistence from Redis to Marten
+- **Multi-tenant support**: Tenant isolation via Orleans RequestContext
+- **ETag-based concurrency**: Optimistic concurrency control with SHA-256 ETags
+- **Backward compatibility**: Automatic migration from old grain ID format
 
-## Installation
+## Quick Start
 
-Install the package from NuGet:
-
-```powershell
-Install-Package Elyfe.Orleans.Marten.Persistence
-```
-
-Or via the .NET CLI:
-
-```bash
-dotnet add package Elyfe.Orleans.Marten.Persistence
-```
-
-## Usage
-
-To use the Marten persistence provider, you first need to configure Marten services in your dependency injection container. Then, use the extension methods on `ISiloBuilder` to add the grain storage.
+### Basic Usage (Marten only)
 
 ```csharp
-var host = new HostBuilder()
-    .UseOrleans(siloBuilder =>
-    {
-        // 1. Configure Marten
-        siloBuilder.ConfigureServices(services =>
-        {
-            services.AddMarten(options =>
-            {
-                options.Connection("your-postgres-connection-string");
-                
-                // Optional: Configure other Marten features
-                options.Projections.Add<MyProjection>(ProjectionLifecycle.Inline);
-            });
-        });
-
-        // 2. Add the Marten grain storage provider
-        
-        // As the default provider
-        siloBuilder.AddMartenGrainStorageAsDefault();
-
-        // Or as a named provider
-        siloBuilder.AddMartenGrainStorage("MyMartenStore");
-    })
-    .Build();
+siloBuilder.AddMartenGrainStorage("Default");
 ```
 
-You can then specify which storage provider to use in your grain with the `[StorageProvider]` attribute:
+### With Redis Cache and Write-Behind
 
 ```csharp
-[StorageProvider(ProviderName = "MyMartenStore")]
-public class MyGrain : Grain<MyGrainState>, IMyGrain
+siloBuilder.AddMartenGrainStorageWithRedis("Default", options =>
 {
-    // ... grain logic
+    options.Threshold = 1000;           // Write surge threshold (writes/sec)
+    options.BatchSize = 100;            // Drainer batch size
+    options.DrainIntervalSeconds = 5;   // Drain check interval
+    options.StateTtlSeconds = 300;      // Cache TTL (0 = no expiration)
+    options.EnableWriteBehind = true;   // Enable overflow
+    options.EnableReadThrough = true;   // Enable cache reads
+});
+```
+
+## Configuration
+
+### appsettings.json
+
+```json
+{
+  "ConnectionStrings": {
+    "Redis": "localhost:6379"
+  },
+  "WriteBehind": {
+    "Threshold": 1000,
+    "BatchSize": 100,
+    "DrainIntervalSeconds": 5,
+    "StateTtlSeconds": 300,
+    "DrainLockTtlSeconds": 30,
+    "EnableWriteBehind": true,
+    "EnableReadThrough": true
+  }
 }
 ```
 
-If you registered it as the default, no attribute is needed.
+### Environment Variables
+
+- `ConnectionStrings__Redis`: Redis connection string (if empty, caching is disabled)
+
+## Architecture
+
+### Redis Data Model
+
+The implementation uses a Hash + Set coalescing pattern:
+
+1. **State Hash** (per storage/tenant): `mgs:{serviceId}:{storageName}{tenantPart}:state`
+   - Field: `{grainKey}` (grain ID with slashes replaced by underscores)
+   - Value: JSON `{ data, etag, lastModified }`
+
+2. **Dirty Set** (per storage/tenant): `mgs:{serviceId}:{storageName}{tenantPart}:dirty`
+   - Members: grain keys pending persistence
+
+3. **Write Counter** (per storage): `mgs:{serviceId}:{storageName}:wcount`
+   - Auto-incremented on each write
+   - Expires after 1 second
+   - Triggers overflow when > Threshold
+
+4. **Drain Lock** (per storage): `mgs:{serviceId}:{storageName}:drain-lock`
+   - Distributed lock for drainer coordination
+   - TTL: 30 seconds (configurable)
+
+### Write Paths
+
+#### Write-Through (Normal Operation)
+
+1. Increment write counter
+2. If counter ≤ threshold:
+   - Persist to Marten
+   - Update cache (if enabled)
+   - Clear dirty marker
+
+#### Write-Behind (Overflow)
+
+1. Increment write counter
+2. If counter > threshold:
+   - Write to Redis cache only
+   - Mark grain as dirty
+   - Skip Marten write (deferred)
+
+### Read Path
+
+1. If cache enabled: check Redis
+2. On cache hit: return cached state
+3. On cache miss:
+   - Read from Marten
+   - Warm cache
+   - Return state
+
+### Background Drainer
+
+- Runs every `DrainIntervalSeconds`
+- Acquires distributed lock per storage
+- Pops up to `BatchSize` dirty grain keys
+- Reads latest state from Redis
+- Upserts to Marten
+- Updates cache with new ETag/lastModified
+- Clears dirty markers
+- On failure: re-marks grain as dirty for retry
+
+## Tenant Isolation
+
+Tenant ID is resolved from Orleans `RequestContext`:
+
+```csharp
+var tenantId = RequestContext.Get("tenantId") as string;
+```
+
+When present, Redis keys include `:tenant:{tenantId}` for isolation. The write counter remains global per storage (cluster-wide threshold).
+
+## Failure Modes & Consistency
+
+| Scenario | Behavior | Durability |
+|----------|----------|------------|
+| Cache read failure | Fall back to Marten | ✅ No data loss |
+| Cache write failure during overflow | Synchronous write to Marten | ✅ No data loss |
+| Drainer failure | Grain remains dirty, retried next cycle | ✅ Eventual consistency |
+| Marten write failure | Exception propagated to grain | ✅ No data loss |
+| Redis unavailable | Cache disabled, Marten-only mode | ✅ No data loss |
+
+### Consistency Guarantees
+
+- **Durability**: All successful grain writes are eventually persisted to Marten
+- **Read-after-write**: Reads always return the latest state (cache or DB)
+- **Idempotency**: Drainer upserts are idempotent
+- **No data loss**: On cache failures during overflow, fallback to synchronous Marten write
+
+## Operations
+
+### Monitoring
+
+Key metrics to monitor:
+
+- **Cache hit rate**: Log level `Debug` shows "Cache hit for grain..."
+- **Overflow events**: Log level `Debug` shows "Write overflow detected..."
+- **Drain cycles**: Log level `Information` shows "Draining X dirty grain states..."
+- **Failures**: Log level `Error` for cache/drain failures
+
+### Scaling
+
+- Write threshold applies **cluster-wide** per storage name
+- Multiple silos can drain concurrently (distributed lock coordination)
+- Redis and Marten can be scaled independently
+
+### Disabling Cache
+
+Set `ConnectionStrings:Redis` to empty string:
+
+```json
+{
+  "ConnectionStrings": {
+    "Redis": ""
+  }
+}
+```
+
+Cache features are automatically disabled; falls back to Marten-only mode.
+
+### Tuning
+
+| Parameter | Impact | Recommendation |
+|-----------|--------|----------------|
+| `Threshold` | Lower = more overflow | Set to 1.2x expected peak writes/sec |
+| `BatchSize` | Larger = fewer cycles | 50-200 depending on grain size |
+| `DrainIntervalSeconds` | Lower = less lag | 5-10 seconds typical |
+| `StateTtlSeconds` | Longer = more cache hits | 300-600 for hot grains |
+
+## Testing
+
+### Unit Tests
+
+```bash
+dotnet test --filter Category=Unit
+```
+
+Tests cover:
+- Key generation and formatting
+- Write counter gating logic
+- Cache operations (read/write/dirty/lock)
+- ETag generation
+
+### Integration Tests
+
+```bash
+dotnet test --filter Category=Integration
+```
+
+Tests use Testcontainers (PostgreSQL + Redis) and verify:
+- Read-through cache behavior
+- Write-behind overflow path
+- Background drainer persistence
+- Eventual consistency
+
+## Migration Guide
+
+### From Plain Marten Storage
+
+1. Add Redis connection string to appsettings
+2. Replace `AddMartenGrainStorage` with `AddMartenGrainStorageWithRedis`
+3. Deploy with `EnableWriteBehind: false` initially (cache only)
+4. Monitor cache hit rate
+5. Enable write-behind once confident
+
+### Backward Compatibility
+
+Old grain IDs (plain `GrainId.ToString()`) are automatically migrated to new format (`{serviceId}_{grainId}`) on first read.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+See LICENSE file in repository root.
