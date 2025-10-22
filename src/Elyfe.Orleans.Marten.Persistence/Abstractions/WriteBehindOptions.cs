@@ -6,6 +6,11 @@ namespace Elyfe.Orleans.Marten.Persistence.Abstractions;
 public class WriteBehindOptions
 {
     /// <summary>
+    /// Database number for write-behind cache.
+    /// </summary>   
+    public int CacheDatabase { get; set; } = 1;
+    
+    /// <summary>
     /// Global write threshold per second per storage before overflow to cache.
     /// </summary>
     public int Threshold { get; set; } = 100;

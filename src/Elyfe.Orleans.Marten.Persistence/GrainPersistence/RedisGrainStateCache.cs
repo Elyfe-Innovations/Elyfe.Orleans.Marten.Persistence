@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -30,7 +29,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var stateHashKey = GetStateHashKey(storageName);
             
@@ -61,7 +60,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var stateHashKey = GetStateHashKey(storageName);
 
@@ -88,7 +87,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var stateHashKey = GetStateHashKey(storageName);
 
@@ -105,7 +104,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var dirtySetKey = GetDirtySetKey(storageName);
 
@@ -124,7 +123,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var dirtySetKey = GetDirtySetKey(storageName);
 
@@ -142,7 +141,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var dirtySetKey = GetDirtySetKey(storageName);
 
             var members = await db.SetPopAsync(dirtySetKey, batchSize);
@@ -160,7 +159,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var wcountKey = GetWriteCounterKey(storageName);
 
             var count = await db.StringIncrementAsync(wcountKey);
@@ -185,7 +184,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var lockKey = GetDrainLockKey(storageName);
 
             return await db.StringSetAsync(lockKey, "locked", lockTtl, When.NotExists);
@@ -201,7 +200,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(1);
+            var db = redis.GetDatabase(_options.CacheDatabase);
             var lockKey = GetDrainLockKey(storageName);
 
             await db.KeyDeleteAsync(lockKey);
@@ -245,51 +244,4 @@ public class RedisGrainStateCache(
         var tenantId = RequestContext.Get("tenantId") as string;
         return string.IsNullOrEmpty(tenantId) ? string.Empty : $":tenant:{tenantId}";
     }
-}
-
-public class CacheDto<T>
-{
-    [JsonIgnore]
-    public Type CacheType { get; set; } = null!;
-
-    public string? TypeString
-    {
-        get => CacheType.AssemblyQualifiedName;
-        set
-        {
-            if(value is null)
-                return;
-            CacheType = Type.GetType(value!)!;
-        }
-    }
-    public string SerializedData { get; set; } = null!;
-
-    public T? GetData()
-    {
-        var data = JsonSerializer.Deserialize(SerializedData, CacheType, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
-        return data is T typedData ? typedData : default;
-    }
-
-    public CacheDto()
-    {
-        
-    }
-
-    public CacheDto(T value, string etag, long lastModified)
-    {
-        CacheType = typeof(T);
-        SerializedData = JsonSerializer.Serialize(value, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
-        ETag = etag;
-        LastModified = lastModified;
-    }
-
-
-    public string ETag { get; init; } = null!;
-    public long LastModified { get; init; }
 }

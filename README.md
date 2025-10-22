@@ -41,9 +41,10 @@ siloBuilder.AddMartenGrainStorageWithRedis("Default", options =>
 ```json
 {
   "ConnectionStrings": {
-    "Redis": "localhost:6379"
+    "cache": "localhost:6379"
   },
   "WriteBehind": {
+    "CacheDatabase": 1,
     "Threshold": 1000,
     "BatchSize": 100,
     "DrainIntervalSeconds": 5,
@@ -57,7 +58,15 @@ siloBuilder.AddMartenGrainStorageWithRedis("Default", options =>
 
 ### Environment Variables
 
-- `ConnectionStrings__Redis`: Redis connection string (if empty, caching is disabled)
+- `ConnectionStrings__cache`: Redis connection string (if empty, caching is disabled)
+- `WriteBehind__CacheDatabase`: Redis database number (default: 0)`
+- `WriteBehind__Threshold`: Write surge threshold (default: 1000)
+- `WriteBehind__BatchSize`: Drainer batch size (default: 100)
+- `WriteBehind__DrainIntervalSeconds`: Drain check interval (default: 5)
+- `WriteBehind__StateTtlSeconds`: Cache TTL in seconds (default: 300)
+- `WriteBehind__DrainLockTtlSeconds`: Drain lock TTL in seconds (default: 30)
+- `WriteBehind__EnableWriteBehind`: Enable write-behind overflow (default: true)
+- `WriteBehind__EnableReadThrough`: Enable read-through cache (default: true)
 
 ## Architecture
 
@@ -85,39 +94,117 @@ The implementation uses a Hash + Set coalescing pattern:
 
 #### Write-Through (Normal Operation)
 
-1. Increment write counter
-2. If counter ≤ threshold:
-   - Persist to Marten
-   - Update cache (if enabled)
-   - Clear dirty marker
+```mermaid
+sequenceDiagram
+    participant G as Grain
+    participant S as Storage
+    participant R as Redis
+    participant M as Marten
+    
+    G->>S: WriteState()
+    S->>R: INCR write_counter
+    R-->>S: counter_value
+    
+    alt counter ≤ threshold
+        S->>M: Upsert grain state
+        M-->>S: success
+        alt cache enabled
+            S->>R: HSET state_hash
+            S->>R: SREM dirty_set
+        end
+        S-->>G: success
+    end
+```
 
 #### Write-Behind (Overflow)
 
-1. Increment write counter
-2. If counter > threshold:
-   - Write to Redis cache only
-   - Mark grain as dirty
-   - Skip Marten write (deferred)
+```mermaid
+sequenceDiagram
+    participant G as Grain
+    participant S as Storage
+    participant R as Redis
+    participant M as Marten
+    
+    G->>S: WriteState()
+    S->>R: INCR write_counter
+    R-->>S: counter_value
+    
+    alt counter > threshold
+        S->>R: HSET state_hash
+        S->>R: SADD dirty_set
+        Note over S,M: Skip Marten write (deferred)
+        S-->>G: success
+    end
+```
 
 ### Read Path
 
-1. If cache enabled: check Redis
-2. On cache hit: return cached state
-3. On cache miss:
-   - Read from Marten
-   - Warm cache
-   - Return state
+```mermaid
+sequenceDiagram
+    participant G as Grain
+    participant S as Storage
+    participant R as Redis
+    participant M as Marten
+    
+    G->>S: ReadState()
+    
+    alt cache enabled
+        S->>R: HGET state_hash
+        alt cache hit
+            R-->>S: cached_state
+            S-->>G: cached_state
+        else cache miss
+            R-->>S: null
+            S->>M: Load grain state
+            M-->>S: state
+            S->>R: HSET state_hash (warm cache)
+            S-->>G: state
+        end
+    else cache disabled
+        S->>M: Load grain state
+        M-->>S: state
+        S-->>G: state
+    end
+```
 
 ### Background Drainer
 
-- Runs every `DrainIntervalSeconds`
-- Acquires distributed lock per storage
-- Pops up to `BatchSize` dirty grain keys
-- Reads latest state from Redis
-- Upserts to Marten
-- Updates cache with new ETag/lastModified
-- Clears dirty markers
-- On failure: re-marks grain as dirty for retry
+```mermaid
+sequenceDiagram
+    participant T as Timer
+    participant D as Drainer
+    participant R as Redis
+    participant M as Marten
+    
+    loop every DrainIntervalSeconds
+        T->>D: Trigger drain cycle
+        D->>R: SETNX drain_lock
+        
+        alt lock acquired
+            D->>R: SPOP dirty_set (BatchSize)
+            R-->>D: dirty_grain_keys
+            
+            loop for each grain_key
+                D->>R: HGET state_hash
+                R-->>D: grain_state
+                D->>M: Upsert grain state
+                
+                alt success
+                    M-->>D: success
+                    D->>R: HSET state_hash (update ETag)
+                    D->>R: SREM dirty_set
+                else failure
+                    M-->>D: error
+                    D->>R: SADD dirty_set (retry)
+                end
+            end
+            
+            D->>R: DEL drain_lock
+        else lock held by another silo
+            Note over D: Skip this cycle
+        end
+    end
+```
 
 ## Tenant Isolation
 

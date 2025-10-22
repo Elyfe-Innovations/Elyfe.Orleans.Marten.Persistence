@@ -106,7 +106,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         cached!.Data.TextValue.Should().Be("overflow-test");
 
         // Verify it's marked dirty
-        var db = _redis.GetDatabase(1);
+        var db = _redis.GetDatabase(options.Value.CacheDatabase);
         var dirtySetKey = $"mgs:test-cluster:TestStorage:dirty";
         var isDirty = await db.SetContainsAsync(dirtySetKey, "test_grain_overflow");
 
