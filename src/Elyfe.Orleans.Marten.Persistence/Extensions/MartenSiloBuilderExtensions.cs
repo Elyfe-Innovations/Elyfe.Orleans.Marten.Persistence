@@ -57,7 +57,7 @@ public static class MartenSiloBuilderExtensions
             var redisConnectionString = siloBuilder.Configuration.GetConnectionString("cache");
             if (!string.IsNullOrEmpty(redisConnectionString))
             {
-                services.AddSingleton<IConnectionMultiplexer>(sp =>
+                services.AddKeyedSingleton<IConnectionMultiplexer>("writeBack",(s, p) =>
                 {
                     var config = ConfigurationOptions.Parse(redisConnectionString);
                     return ConnectionMultiplexer.Connect(config);
@@ -66,7 +66,7 @@ public static class MartenSiloBuilderExtensions
                 // Register cache with service ID from cluster options
                 services.AddSingleton<IGrainStateCache>(sp =>
                 {
-                    var redis = sp.GetRequiredService<IConnectionMultiplexer>();
+                    var redis = sp.GetRequiredKeyedService<IConnectionMultiplexer>("writeBack");
                     var logger = sp.GetRequiredService<ILogger<RedisGrainStateCache>>();
                     var options = sp.GetRequiredService<IOptions<WriteBehindOptions>>();
                     var clusterOptions = sp.GetRequiredService<IOptions<ClusterOptions>>();
