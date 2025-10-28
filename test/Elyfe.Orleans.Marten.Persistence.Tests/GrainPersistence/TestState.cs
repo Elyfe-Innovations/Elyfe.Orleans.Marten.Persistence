@@ -1,4 +1,4 @@
-﻿namespace Elyfe.Orleans.Marten.Persistence.Tests.GrainPersistence;
+namespace Elyfe.Orleans.Marten.Persistence.Tests.GrainPersistence;
 
 public class TestState
 {

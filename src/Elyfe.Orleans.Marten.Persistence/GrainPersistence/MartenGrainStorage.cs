@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Elyfe.Orleans.Marten.Persistence.Abstractions;
+using Elyfe.Orleans.Marten.Persistence.Options;
 using JasperFx;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,11 +21,12 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     private readonly string _clusterService;
     // private readonly IDocumentStore _documentStore = services.GetKeyedService<IDocumentStore>(storageName) ?? documentStore;
     private readonly IGrainStateCache? _cache;
-    private readonly WriteBehindOptions _options;
+    private readonly WriteBehindOptions _writeBehindOptions;
     private readonly string _storageName;
     private readonly IDocumentStore _documentStore;
     private readonly ILogger<MartenGrainStorage> _logger;
     private readonly IHostEnvironment _environment;
+    private readonly MartenStorageOptions _martenOptions;
 
     public MartenGrainStorage(string storageName,
         IDocumentStore documentStore,
@@ -39,8 +41,10 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         _environment = environment;
         _clusterService = clusterOptions.Value.ServiceId;
         _cache = services.GetService<IGrainStateCache>();
-        _options = services.GetService<IOptions<WriteBehindOptions>>()?.Value ?? new WriteBehindOptions();
+        _writeBehindOptions = services.GetService<IOptions<WriteBehindOptions>>()?.Value ?? new WriteBehindOptions();
+        _martenOptions = services.GetService<IOptions<MartenStorageOptions>>()?.Value ?? new MartenStorageOptions();
         services.GetService<CacheToMartenWriter>()?.RegisterStorage(_storageName);
+        
         
     }
 
@@ -49,7 +53,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         if (_logger.IsEnabled(LogLevel.Trace))
             _logger.LogTrace($"Clearing state for grain {grainId} of type {grainType}.");
 
-        await using var session = _documentStore.LightweightSession();
+        await using var session = _martenOptions.UseTenantPerStorage? _documentStore.LightweightSession(_storageName): _documentStore.LightweightSession();
         var id = GenerateId(grainId);
         session.Delete<MartenGrainData<T>>(id);
         await session.SaveChangesAsync();
@@ -63,7 +67,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 _logger.LogTrace($"Reading state for grain {grainId} of type {typeof(T).Name}.");
 
             // Read-through cache: check cache first if enabled
-            if (_cache != null && _options.EnableReadThrough)
+            if (_cache != null && _writeBehindOptions.EnableReadThrough)
             {
                 var cached = await _cache.ReadAsync<T>(_storageName, grainId);
                 if (cached != null)
@@ -79,7 +83,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 }
             }
 
-            await using var session = _documentStore.QuerySession();
+            await using var session = _martenOptions.UseTenantPerStorage? _documentStore.QuerySession(_storageName): _documentStore.QuerySession();
             var id = GenerateId(grainId);
             var document = await session.LoadAsync<MartenGrainData<T>>(id);
 
@@ -90,7 +94,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 grainState.ETag = document.Etag; // Generate the ETag from the state.
                 
                 // Warm cache after Marten read
-                if (_cache != null && _options.EnableReadThrough)
+                if (_cache != null && _writeBehindOptions.EnableReadThrough)
                 {
                     await _cache.WriteAsync(_storageName, grainId, document.Data, grainState.ETag, document.LastModified.ToUnixTimeMilliseconds());
                 }
@@ -125,7 +129,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     private async Task MigrateGrainStateAsync<T>(IGrainState<T> grainState, MartenGrainData<T> document, string id, string oldId)
     {
         var newState = MartenGrainData<T>.Create(document.Data, id);
-        await using var migrationSession = _documentStore.LightweightSession();
+        await using var migrationSession =_martenOptions.UseTenantPerStorage? _documentStore.LightweightSession(_storageName): _documentStore.LightweightSession();
         migrationSession.Store(newState);
         await migrationSession.SaveChangesAsync();
         //Delete old document
@@ -150,16 +154,16 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
             // Check write surge if write-behind is enabled
             bool overflow = false;
-            if (_cache != null && _options.EnableWriteBehind)
+            if (_cache != null && _writeBehindOptions.EnableWriteBehind)
             {
                 var writeCount = await _cache.IncrementWriteCounterAsync(_storageName);
-                overflow = writeCount > _options.Threshold;
+                overflow = writeCount > _writeBehindOptions.Threshold;
 
                 if (overflow)
                 {
                     if (_logger.IsEnabled(LogLevel.Debug))
                         _logger.LogDebug("Write overflow detected ({WriteCount} > {Threshold}), using write-behind for grain {GrainId}", 
-                            writeCount, _options.Threshold, grainId);
+                            writeCount, _writeBehindOptions.Threshold, grainId);
 
                     // Write-behind path: cache only, mark dirty, skip DB
                     try
@@ -187,20 +191,20 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             // If we have an existing record, validate ETag for optimistic concurrency
             if (grainState.RecordExists && grainState.ETag != null)
             {
-                await using var readSession = _documentStore.QuerySession();
+                await using var readSession = _martenOptions.UseTenantPerStorage? _documentStore.QuerySession(_storageName): _documentStore.QuerySession();
                 var existingDocument = await readSession.LoadAsync<MartenGrainData<T>>(id);
             
                 if (existingDocument != null)
                 {
                     var currentETag = existingDocument.Etag;
                     /*if (grainState.ETag != currentETag)
-                {
-                    throw new InconsistentStateException($"ETag mismatch for grain {grainId}. Expected: {grainState.ETag}, Actual: {currentETag}");
-                }*/
+                    {
+                        throw new InconsistentStateException($"ETag mismatch for grain {grainId}. Expected: {grainState.ETag}, Actual: {currentETag}");
+                    }*/
                 }
             }
 
-            await using var session = _documentStore.LightweightSession();
+            await using var session = _martenOptions.UseTenantPerStorage? _documentStore.LightweightSession(_storageName): _documentStore.LightweightSession();
             if (grainState.State is not null)
             {
                 session.Store(state);
@@ -209,7 +213,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 grainState.RecordExists = true;
 
                 // Update cache and ensure not marked dirty (write-through path)
-                if (_cache != null && (_options.EnableReadThrough || _options.EnableWriteBehind))
+                if (_cache != null && (_writeBehindOptions.EnableReadThrough || _writeBehindOptions.EnableWriteBehind))
                 {
                     await _cache.WriteAsync(_storageName, grainId, grainState.State, newETag, lastModified);
                     await _cache.ClearDirtyAsync(_storageName, grainId);

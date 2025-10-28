@@ -9,6 +9,7 @@ Orleans grain storage implementation using Marten (PostgreSQL document store) wi
 - **Write-behind overflow**: Automatic overflow to Redis cache during write surges (>100 writes/sec)
 - **Background drainer**: Asynchronous persistence from Redis to Marten
 - **Multi-tenant support**: Tenant isolation via Orleans RequestContext
+- **Marten tenancy per storage**: Configure different IDocumentStore instances per storage name using Marten's multi-tenancy features
 - **ETag-based concurrency**: Optimistic concurrency control with SHA-256 ETags
 - **Backward compatibility**: Automatic migration from old grain ID format
 
@@ -33,6 +34,35 @@ siloBuilder.AddMartenGrainStorageWithRedis("Default", options =>
     options.EnableReadThrough = true;   // Enable cache reads
 });
 ```
+
+### With Marten Multi-Tenancy Per Storage
+
+When you want each storage name to use a different Marten tenant (database schema), enabling Marten's built-in multi-tenancy:
+
+```csharp
+// Configure MartenStorageOptions to use storage name as tenant ID
+siloBuilder.ConfigureServices(services =>
+{
+    services.Configure<MartenStorageOptions>(options =>
+    {
+        options.UseTenantPerStorage = true;
+    });
+    
+    // Register your IDocumentStore with multi-tenancy enabled
+    services.AddMarten(opts =>
+    {
+        opts.Connection("your-connection-string");
+        opts.Policies.AllDocumentsAreMultiTenanted();
+        // Additional Marten configuration...
+    });
+});
+
+// Add storage - the storage name will be used as the Marten tenant ID
+siloBuilder.AddMartenGrainStorage("SmsStorage");
+siloBuilder.AddMartenGrainStorage("EventsStorage");
+```
+
+With `UseTenantPerStorage = true`, each storage provider will create Marten sessions scoped to that storage name as the tenant identifier. This provides complete data isolation at the database level using Marten's multi-tenancy capabilities.
 
 ## Configuration
 
@@ -67,6 +97,10 @@ siloBuilder.AddMartenGrainStorageWithRedis("Default", options =>
 - `WriteBehind__DrainLockTtlSeconds`: Drain lock TTL in seconds (default: 30)
 - `WriteBehind__EnableWriteBehind`: Enable write-behind overflow (default: true)
 - `WriteBehind__EnableReadThrough`: Enable read-through cache (default: true)
+
+#### Marten Multi-Tenancy Options
+
+- `MartenStorage__UseTenantPerStorage`: Use storage name as Marten tenant ID (default: false)
 
 ## Architecture
 
@@ -208,13 +242,33 @@ sequenceDiagram
 
 ## Tenant Isolation
 
+### Orleans RequestContext Tenancy
+
 Tenant ID is resolved from Orleans `RequestContext`:
 
 ```csharp
 var tenantId = RequestContext.Get("tenantId") as string;
 ```
 
-When present, Redis keys include `:tenant:{tenantId}` for isolation. The write counter remains global per storage (cluster-wide threshold).
+When present, Redis keys include `:tenant:{tenantId}` for cache isolation. The write counter remains global per storage (cluster-wide threshold).
+
+### Marten Multi-Tenancy Per Storage
+
+When `UseTenantPerStorage` is enabled, each storage name becomes a Marten tenant identifier. This leverages Marten's built-in multi-tenancy features to:
+
+- Store data for different storage providers in separate database schemas or logical partitions
+- Provide complete data isolation at the database level
+- Enable independent schema management per storage provider
+- Support different document types and configurations per tenant/storage
+
+Example use case: In a multi-module platform (SMS, Events, Finance), each module can use its own storage with complete data isolation:
+
+```csharp
+// Each storage gets its own Marten tenant
+siloBuilder.AddMartenGrainStorage("sms");     // Uses "sms" as tenant ID
+siloBuilder.AddMartenGrainStorage("events");  // Uses "events" as tenant ID  
+siloBuilder.AddMartenGrainStorage("finance"); // Uses "finance" as tenant ID
+```
 
 ## Failure Modes & Consistency
 
@@ -298,6 +352,9 @@ Tests use Testcontainers (PostgreSQL + Redis) and verify:
 - Write-behind overflow path
 - Background drainer persistence
 - Eventual consistency
+- Multi-tenancy with `UseTenantPerStorage`
+- Data isolation across different storage names
+- Correct tenant selection for reads and writes
 
 ## Migration Guide
 

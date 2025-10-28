@@ -95,7 +95,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(true);
 
-        var options = Options.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new WriteBehindOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -129,7 +129,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(true);
 
-        var options = Options.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new WriteBehindOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -155,7 +155,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(false);
 
-        var options = Options.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new WriteBehindOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -182,7 +182,7 @@ public class RedisGrainStateCacheTests
         )).Callback<RedisKey, RedisValue, RedisValue, When, CommandFlags>((k, f, v, w, c) => capturedValue = v)
           .ReturnsAsync(true);
 
-        var options = Options.Create(new WriteBehindOptions { StateTtlSeconds = 300 });
+        var options = OptionsHelper.Create(new WriteBehindOptions { StateTtlSeconds = 300 });
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -228,7 +228,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(true);
 
-        var options = Options.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new WriteBehindOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -257,7 +257,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(true);
 
-        var options = Options.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new WriteBehindOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -287,7 +287,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(dirtyKeys);
 
-        var options = Options.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new WriteBehindOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");

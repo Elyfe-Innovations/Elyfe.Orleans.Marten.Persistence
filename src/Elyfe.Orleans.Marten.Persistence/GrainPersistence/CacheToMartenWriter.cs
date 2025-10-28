@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using Elyfe.Orleans.Marten.Persistence.Abstractions;
+using Elyfe.Orleans.Marten.Persistence.Options;
 using Marten;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -19,6 +20,7 @@ public class CacheToMartenWriter : BackgroundService
     private readonly IDocumentStore _documentStore;
     private readonly ILogger<CacheToMartenWriter> _logger;
     private readonly WriteBehindOptions _options;
+    private readonly MartenStorageOptions _martenOptions;
     private readonly string _serviceId;
     private readonly JsonSerializerOptions _jsonOptions;
     private HashSet<string> _storageNames = new();
@@ -28,12 +30,14 @@ public class CacheToMartenWriter : BackgroundService
         IDocumentStore documentStore,
         ILogger<CacheToMartenWriter> logger,
         IOptions<WriteBehindOptions> options,
-        IOptions<ClusterOptions> clusterOptions)
+        IOptions<ClusterOptions> clusterOptions,
+        IOptions<MartenStorageOptions> martenOptions)
     {
         _cache = cache;
         _documentStore = documentStore;
         _logger = logger;
         _options = options.Value;
+        _martenOptions = martenOptions.Value;
         _serviceId = clusterOptions.Value.ServiceId;
         _jsonOptions = new JsonSerializerOptions
         {
@@ -174,7 +178,9 @@ public class CacheToMartenWriter : BackgroundService
         // var document = MartenGrainData.Create(cached.Data, martenId);
 
         // Upsert to Marten
-        await using var session = _documentStore.LightweightSession();
+        await using var session = _martenOptions.UseTenantPerStorage 
+            ? _documentStore.LightweightSession(storageName) 
+            : _documentStore.LightweightSession();
         session.Store(document);
         await session.SaveChangesAsync(cancellationToken);
 

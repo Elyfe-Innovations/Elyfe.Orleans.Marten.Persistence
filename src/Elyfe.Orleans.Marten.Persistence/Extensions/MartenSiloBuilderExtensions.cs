@@ -1,5 +1,6 @@
 using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
+using Elyfe.Orleans.Marten.Persistence.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -29,7 +30,12 @@ public static class MartenSiloBuilderExtensions
 
     public static ISiloBuilder AddMartenGrainStorage(this ISiloBuilder siloBuilder, string storageName)
     {
-        return siloBuilder.ConfigureServices(services => services.AddMartenGrainStorage(storageName));
+        return siloBuilder.ConfigureServices(services =>
+        {
+            // Ensure MartenStorageOptions is configured (with defaults if not already configured)
+            services.AddOptions<MartenStorageOptions>().BindConfiguration("MartenStorage");
+            services.AddMartenGrainStorage(storageName);
+        });
     }
 
     /// <summary>
@@ -42,8 +48,8 @@ public static class MartenSiloBuilderExtensions
     {
         return siloBuilder.ConfigureServices((services) =>
         {
-            // Add Marten storage
-            services.AddMartenGrainStorage(storageName);
+            // Ensure MartenStorageOptions is configured
+            services.AddOptions<MartenStorageOptions>().BindConfiguration("MartenStorage");
 
             // Configure write-behind options
             var optionsBuilder = services.AddOptions<WriteBehindOptions>();
@@ -53,7 +59,7 @@ public static class MartenSiloBuilderExtensions
                 optionsBuilder.Configure(configureOptions);
             }
 
-            // Register Redis if connection string is provided
+            // Register Redis if a connection string is provided
             var redisConnectionString = siloBuilder.Configuration.GetConnectionString("cache");
             if (!string.IsNullOrEmpty(redisConnectionString))
             {
@@ -86,6 +92,9 @@ public static class MartenSiloBuilderExtensions
                     opt.EnableWriteBehind = false;
                 });
             }
+            
+            // Add Marten storage
+            services.AddMartenGrainStorage(storageName);
         });
     }
 }

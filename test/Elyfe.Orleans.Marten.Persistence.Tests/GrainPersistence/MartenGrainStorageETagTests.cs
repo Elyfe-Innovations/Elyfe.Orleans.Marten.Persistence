@@ -41,7 +41,7 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         _documentStore = DocumentStore.For(_postgreSqlContainer.GetConnectionString());
 
         var logger = new NullLogger<MartenGrainStorage>();
-        var clusterOptions = Options.Create(new ClusterOptions { ServiceId = "test-cluster" });
+        var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var hostEnvironment = new Mock<IHostEnvironment>();
         hostEnvironment.Setup(h => h.EnvironmentName).Returns("Development");
         

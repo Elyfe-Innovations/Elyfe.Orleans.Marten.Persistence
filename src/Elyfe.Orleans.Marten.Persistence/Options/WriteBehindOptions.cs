@@ -1,4 +1,4 @@
-namespace Elyfe.Orleans.Marten.Persistence.Abstractions;
+namespace Elyfe.Orleans.Marten.Persistence.Options;
 
 /// <summary>
 /// Configuration options for write-behind grain state caching.

@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
+using Elyfe.Orleans.Marten.Persistence.Options;
 using JasperFx;
 using Marten;
 using Microsoft.Extensions.FileProviders;
@@ -67,14 +68,14 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         if (_documentStore == null || _redis == null)
             throw new InvalidOperationException("Test containers not initialized");
 
-        var options = Options.Create(new WriteBehindOptions
+        var options = OptionsHelper.Create(new WriteBehindOptions
         {
             Threshold = 0, // Force overflow immediately
             EnableWriteBehind = true,
             EnableReadThrough = true
         });
 
-        var clusterOptions = Options.Create(new ClusterOptions { ServiceId = "test-cluster" });
+        var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var logger = new LoggerFactory().CreateLogger<MartenGrainStorage>();
         var hostEnv = new MockHostEnvironment();
 
@@ -119,13 +120,13 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         if (_documentStore == null || _redis == null)
             throw new InvalidOperationException("Test containers not initialized");
 
-        var options = Options.Create(new WriteBehindOptions
+        var options = OptionsHelper.Create(new WriteBehindOptions
         {
             EnableReadThrough = true,
             EnableWriteBehind = false
         });
 
-        var clusterOptions = Options.Create(new ClusterOptions { ServiceId = "test-cluster" });
+        var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var logger = new LoggerFactory().CreateLogger<MartenGrainStorage>();
         var cacheLogger = new LoggerFactory().CreateLogger<RedisGrainStateCache>();
         var hostEnv = new MockHostEnvironment();
@@ -164,13 +165,13 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         if (_documentStore == null || _redis == null)
             throw new InvalidOperationException("Test containers not initialized");
 
-        var options = Options.Create(new WriteBehindOptions
+        var options = OptionsHelper.Create(new WriteBehindOptions
         {
             BatchSize = 10,
             DrainIntervalSeconds = 1
         });
 
-        var clusterOptions = Options.Create(new ClusterOptions { ServiceId = "test-cluster" });
+        var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var logger = new LoggerFactory().CreateLogger<CacheToMartenWriter>();
         var cacheLogger = new LoggerFactory().CreateLogger<RedisGrainStateCache>();
 
@@ -186,12 +187,14 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         await cache.MarkDirtyAsync("Default", grainId);
 
         // Create drainer
+        var martenOptions = OptionsHelper.Create(new MartenStorageOptions());
         var drainer = new CacheToMartenWriter(
             cache,
             _documentStore,
             logger,
             options,
-            clusterOptions
+            clusterOptions,
+            martenOptions
         );
         drainer.RegisterStorage("Default");
         // Run drain manually
