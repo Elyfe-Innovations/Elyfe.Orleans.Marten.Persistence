@@ -12,4 +12,5 @@ public class MartenStorageOptions
     /// Default: false (all storage providers use the default tenant).
     /// </summary>
     public bool UseTenantPerStorage { get; set; } = false;
+    public WriteBehindOptions WriteBehind { get; set; } = new();
 }

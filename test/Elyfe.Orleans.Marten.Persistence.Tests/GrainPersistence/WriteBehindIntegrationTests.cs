@@ -68,18 +68,23 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         if (_documentStore == null || _redis == null)
             throw new InvalidOperationException("Test containers not initialized");
 
-        var options = OptionsHelper.Create(new WriteBehindOptions
-        {
-            Threshold = 0, // Force overflow immediately
-            EnableWriteBehind = true,
-            EnableReadThrough = true
-        });
+        var martenStorageOptions = OptionsHelper.Create(new MartenStorageOptions()
+            {
+                UseTenantPerStorage = false,
+                WriteBehind = new WriteBehindOptions
+                {
+                    Threshold = 0, // Force overflow immediately
+                    EnableWriteBehind = true,
+                    EnableReadThrough = true
+                }
+            }
+        );
 
         var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var logger = new LoggerFactory().CreateLogger<MartenGrainStorage>();
         var hostEnv = new MockHostEnvironment();
 
-        var serviceProvider = new MockServiceProvider(_documentStore, _redis, options, clusterOptions);
+        var serviceProvider = new MockServiceProvider(_documentStore, _redis, martenStorageOptions, clusterOptions);
 
         var storage = new MartenGrainStorage(
             "TestStorage",
@@ -107,7 +112,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         cached!.Data.TextValue.Should().Be("overflow-test");
 
         // Verify it's marked dirty
-        var db = _redis.GetDatabase(options.Value.CacheDatabase);
+        var db = _redis.GetDatabase(martenStorageOptions.Value.WriteBehind.CacheDatabase);
         var dirtySetKey = $"mgs:test-cluster:TestStorage:dirty";
         var isDirty = await db.SetContainsAsync(dirtySetKey, "test_grain_overflow");
 
@@ -120,19 +125,26 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         if (_documentStore == null || _redis == null)
             throw new InvalidOperationException("Test containers not initialized");
 
-        var options = OptionsHelper.Create(new WriteBehindOptions
+        var martenStorageOptions = OptionsHelper.Create(new MartenStorageOptions
         {
-            EnableReadThrough = true,
-            EnableWriteBehind = false
+            UseTenantPerStorage = false,
+            WriteBehind = new WriteBehindOptions
+            {
+                EnableReadThrough = true,
+                EnableWriteBehind = false
+            }
         });
+        var writeBehindOptions = OptionsHelper.Create(martenStorageOptions.Value.WriteBehind);
+
 
         var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var logger = new LoggerFactory().CreateLogger<MartenGrainStorage>();
         var cacheLogger = new LoggerFactory().CreateLogger<RedisGrainStateCache>();
         var hostEnv = new MockHostEnvironment();
 
-        var cache = new RedisGrainStateCache(_redis, cacheLogger, options, "test-cluster");
-        var serviceProvider = new MockServiceProvider(_documentStore, _redis, options, clusterOptions, cache);
+        var cache = new RedisGrainStateCache(_redis, cacheLogger, writeBehindOptions, "test-cluster");
+        var serviceProvider =
+            new MockServiceProvider(_documentStore, _redis, martenStorageOptions, clusterOptions, cache);
 
         var storage = new MartenGrainStorage(
             "TestStorage",
@@ -237,25 +249,27 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
     {
         private readonly IDocumentStore _documentStore;
         private readonly IConnectionMultiplexer _redis;
-        private readonly IOptions<WriteBehindOptions> _options;
+        private readonly IOptions<WriteBehindOptions> _writeBehindOptions;
         private readonly IOptions<ClusterOptions> _clusterOptions;
         private readonly RedisGrainStateCache? _cache;
+        private readonly IOptions<MartenStorageOptions> _martenStorageOptions;
 
         public MockServiceProvider(
             IDocumentStore documentStore,
             IConnectionMultiplexer redis,
-            IOptions<WriteBehindOptions> options,
+            IOptions<MartenStorageOptions> martenStorageOptions,
             IOptions<ClusterOptions> clusterOptions,
             RedisGrainStateCache? cache = null)
         {
             _documentStore = documentStore;
             _redis = redis;
-            _options = options;
+            _martenStorageOptions = martenStorageOptions;
+            _writeBehindOptions = OptionsHelper.Create(martenStorageOptions.Value.WriteBehind);
             _clusterOptions = clusterOptions;
             _cache = cache ?? new RedisGrainStateCache(
                 redis,
                 new LoggerFactory().CreateLogger<RedisGrainStateCache>(),
-                options,
+                _writeBehindOptions,
                 clusterOptions.Value.ServiceId
             );
         }
@@ -267,13 +281,21 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
             if (serviceType == typeof(IConnectionMultiplexer))
                 return _redis;
             if (serviceType == typeof(IOptions<WriteBehindOptions>))
-                return _options;
+                return _writeBehindOptions;
             if (serviceType == typeof(IOptions<ClusterOptions>))
                 return _clusterOptions;
             if (serviceType == typeof(RedisGrainStateCache))
                 return _cache;
             if (serviceType == typeof(IGrainStateCache))
                 return _cache;
+            if (serviceType == typeof(IOptions<MartenStorageOptions>))
+                return _martenStorageOptions;
+            if (serviceType == typeof(CacheToMartenWriter))
+                return new CacheToMartenWriter(_cache, _documentStore,
+                    new LoggerFactory().CreateLogger<CacheToMartenWriter>(), 
+                    _writeBehindOptions,
+                    _clusterOptions,
+                    _martenStorageOptions);
 
             return null;
         }

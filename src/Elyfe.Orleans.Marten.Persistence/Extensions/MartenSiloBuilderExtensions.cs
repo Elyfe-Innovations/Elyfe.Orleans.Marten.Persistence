@@ -33,7 +33,7 @@ public static class MartenSiloBuilderExtensions
         return siloBuilder.ConfigureServices(services =>
         {
             // Ensure MartenStorageOptions is configured (with defaults if not already configured)
-            services.AddOptions<MartenStorageOptions>().BindConfiguration("MartenStorage");
+            services.AddOptions<MartenStorageOptions>().BindConfiguration("Orleans:Persistence:Marten");
             services.AddMartenGrainStorage(storageName);
         });
     }
@@ -49,11 +49,11 @@ public static class MartenSiloBuilderExtensions
         return siloBuilder.ConfigureServices((services) =>
         {
             // Ensure MartenStorageOptions is configured
-            services.AddOptions<MartenStorageOptions>().BindConfiguration("MartenStorage");
+            services.AddOptions<MartenStorageOptions>().BindConfiguration("Orleans:Persistence:Marten");
 
             // Configure write-behind options
             var optionsBuilder = services.AddOptions<WriteBehindOptions>();
-            optionsBuilder.BindConfiguration("WriteBehind");
+            optionsBuilder.BindConfiguration("Orleans:Persistence:Marten:WriteBehind");
             if (configureOptions != null)
             {
                 optionsBuilder.Configure(configureOptions);

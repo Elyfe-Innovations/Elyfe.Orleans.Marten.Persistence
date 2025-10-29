@@ -21,7 +21,6 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     private readonly string _clusterService;
     // private readonly IDocumentStore _documentStore = services.GetKeyedService<IDocumentStore>(storageName) ?? documentStore;
     private readonly IGrainStateCache? _cache;
-    private readonly WriteBehindOptions _writeBehindOptions;
     private readonly string _storageName;
     private readonly IDocumentStore _documentStore;
     private readonly ILogger<MartenGrainStorage> _logger;
@@ -41,7 +40,6 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         _environment = environment;
         _clusterService = clusterOptions.Value.ServiceId;
         _cache = services.GetService<IGrainStateCache>();
-        _writeBehindOptions = services.GetService<IOptions<WriteBehindOptions>>()?.Value ?? new WriteBehindOptions();
         _martenOptions = services.GetService<IOptions<MartenStorageOptions>>()?.Value ?? new MartenStorageOptions();
         services.GetService<CacheToMartenWriter>()?.RegisterStorage(_storageName);
         
@@ -67,7 +65,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 _logger.LogTrace($"Reading state for grain {grainId} of type {typeof(T).Name}.");
 
             // Read-through cache: check cache first if enabled
-            if (_cache != null && _writeBehindOptions.EnableReadThrough)
+            if (_cache != null && _martenOptions.WriteBehind.EnableReadThrough)
             {
                 var cached = await _cache.ReadAsync<T>(_storageName, grainId);
                 if (cached != null)
@@ -94,7 +92,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 grainState.ETag = document.Etag; // Generate the ETag from the state.
                 
                 // Warm cache after Marten read
-                if (_cache != null && _writeBehindOptions.EnableReadThrough)
+                if (_cache != null && _martenOptions.WriteBehind.EnableReadThrough)
                 {
                     await _cache.WriteAsync(_storageName, grainId, document.Data, grainState.ETag, document.LastModified.ToUnixTimeMilliseconds());
                 }
@@ -154,16 +152,16 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
             // Check write surge if write-behind is enabled
             bool overflow = false;
-            if (_cache != null && _writeBehindOptions.EnableWriteBehind)
+            if (_cache != null && _martenOptions.WriteBehind.EnableWriteBehind)
             {
                 var writeCount = await _cache.IncrementWriteCounterAsync(_storageName);
-                overflow = writeCount > _writeBehindOptions.Threshold;
+                overflow = writeCount > _martenOptions.WriteBehind.Threshold;
 
                 if (overflow)
                 {
                     if (_logger.IsEnabled(LogLevel.Debug))
                         _logger.LogDebug("Write overflow detected ({WriteCount} > {Threshold}), using write-behind for grain {GrainId}", 
-                            writeCount, _writeBehindOptions.Threshold, grainId);
+                            writeCount, _martenOptions.WriteBehind.Threshold, grainId);
 
                     // Write-behind path: cache only, mark dirty, skip DB
                     try
@@ -213,7 +211,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 grainState.RecordExists = true;
 
                 // Update cache and ensure not marked dirty (write-through path)
-                if (_cache != null && (_writeBehindOptions.EnableReadThrough || _writeBehindOptions.EnableWriteBehind))
+                if (_cache != null && (_martenOptions.WriteBehind.EnableReadThrough || _martenOptions.WriteBehind.EnableWriteBehind))
                 {
                     await _cache.WriteAsync(_storageName, grainId, grainState.State, newETag, lastModified);
                     await _cache.ClearDirtyAsync(_storageName, grainId);
