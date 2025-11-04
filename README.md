@@ -100,7 +100,7 @@ With `UseTenantPerStorage = true`, each storage provider will create Marten sess
 
 #### Marten Multi-Tenancy Options
 
-- `Orleans__Persistence__Marten__UseTenantPerStorage` : Use storage name as Marten tenant ID (default: false)
+- `Orleans__Persistence__Marten__UseTenantPerStorage`: Use storage name as Marten tenant ID (default: false)
 
 ## Architecture
 
