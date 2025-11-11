@@ -13,7 +13,7 @@ on:
 jobs:
   build:
     name: Build and Pack
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       nuget_version: ${{ steps.gitversion.outputs.nuGetVersionV2 }}
     steps:
@@ -59,7 +59,7 @@ jobs:
   publish:
     name: Publish to NuGet
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     environment:
       name: nuget
       url: https://www.nuget.org/packages/Elyfe.Orleans.Marten.Persistence/${{ needs.build.outputs.nuget_version }}
