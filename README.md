@@ -89,18 +89,18 @@ With `UseTenantPerStorage = true`, each storage provider will create Marten sess
 ### Environment Variables
 
 - `ConnectionStrings__cache`: Redis connection string (if empty, caching is disabled)
-- `WriteBehind__CacheDatabase`: Redis database number (default: 0)`
-- `WriteBehind__Threshold`: Write surge threshold (default: 1000)
-- `WriteBehind__BatchSize`: Drainer batch size (default: 100)
-- `WriteBehind__DrainIntervalSeconds`: Drain check interval (default: 5)
-- `WriteBehind__StateTtlSeconds`: Cache TTL in seconds (default: 300)
-- `WriteBehind__DrainLockTtlSeconds`: Drain lock TTL in seconds (default: 30)
-- `WriteBehind__EnableWriteBehind`: Enable write-behind overflow (default: true)
-- `WriteBehind__EnableReadThrough`: Enable read-through cache (default: true)
+- `Orleans__Persistence__Marten__WriteBehind__CacheDatabase`: Redis database number (default: 0)`
+- `Orleans__Persistence__Marten__WriteBehind__Threshold`: Write surge threshold (default: 1000)
+- `Orleans__Persistence__Marten__WriteBehind__BatchSize`: Drainer batch size (default: 100)
+- `Orleans__Persistence__Marten__WriteBehind__DrainIntervalSeconds`: Drain check interval (default: 5)
+- `Orleans__Persistence__Marten__WriteBehind__StateTtlSeconds`: Cache TTL in seconds (default: 300)
+- `Orleans__Persistence__Marten__WriteBehind__DrainLockTtlSeconds`: Drain lock TTL in seconds (default: 30)
+- `Orleans__Persistence__Marten__WriteBehind__EnableWriteBehind`: Enable write-behind overflow (default: true)
+- `Orleans__Persistence__Marten__WriteBehind__EnableReadThrough`: Enable read-through cache (default: true)
 
 #### Marten Multi-Tenancy Options
 
-- `MartenStorage__UseTenantPerStorage`: Use storage name as Marten tenant ID (default: false)
+- `Orleans__Persistence__Marten__UseTenantPerStorage`: Use storage name as Marten tenant ID (default: false)
 
 ## Architecture
 
