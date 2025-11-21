@@ -31,10 +31,15 @@ jobs:
         id: gitversion
         uses: gittools/actions/gitversion/execute@v1.1.1
 
-      - name: Setup .NET
+      - name: Setup .NET 9
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
+          
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
 
       - name: Restore dependencies
         run: dotnet restore Elyfe.Orleans.Marten.Persistence.slnx
