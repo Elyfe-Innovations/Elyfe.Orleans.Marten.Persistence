@@ -3,12 +3,10 @@ using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 using Marten;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using Orleans;
 using Orleans.Configuration;
 using Orleans.Runtime;
-using Orleans.Storage;
 using Testcontainers.PostgreSql;
 using Xunit;
 

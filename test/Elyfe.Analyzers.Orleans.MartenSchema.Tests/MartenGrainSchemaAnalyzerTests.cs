@@ -1,4 +1,3 @@
-using System.Threading.Tasks;
 using Xunit;
 using Verify =
     Microsoft.CodeAnalysis.CSharp.Testing.CSharpAnalyzerVerifier<

@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
-using Elyfe.Orleans.Marten.Persistence.Options;
 using JasperFx;
 using Marten;
 using Microsoft.Extensions.FileProviders;

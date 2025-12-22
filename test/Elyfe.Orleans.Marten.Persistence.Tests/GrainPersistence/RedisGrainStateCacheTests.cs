@@ -1,8 +1,6 @@
 using AwesomeAssertions;
-using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Moq;
 using Orleans.Runtime;
 using StackExchange.Redis;
