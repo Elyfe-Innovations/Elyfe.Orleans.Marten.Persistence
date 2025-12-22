@@ -6,7 +6,7 @@ Orleans grain storage implementation using Marten (PostgreSQL document store) wi
 
 - **Marten-backed grain storage**: Persistent grain state in PostgreSQL using Marten document store
 - **Redis read-through cache**: Optional caching layer for improved read performance
-- **Write-behind overflow**: Automatic overflow to Redis cache during write surges (>100 writes/sec)
+- **Write-behind overflow**: Automatic overflow to Redis cache during writing surges (>100 writes/sec)
 - **Background drainer**: Asynchronous persistence from Redis to Marten
 - **Multi-tenant support**: Tenant isolation via Orleans RequestContext
 - **Marten tenancy per storage**: Configure different IDocumentStore instances per storage name using Marten's multi-tenancy features
@@ -116,7 +116,7 @@ The implementation uses a Hash + Set coalescing pattern:
    - Members: grain keys pending persistence
 
 3. **Write Counter** (per storage): `mgs:{serviceId}:{storageName}:wcount`
-   - Auto-incremented on each write
+   - Auto-incremented on each writing
    - Expires after 1 second
    - Triggers overflow when > Threshold
 
@@ -272,13 +272,13 @@ siloBuilder.AddMartenGrainStorage("finance"); // Uses "finance" as tenant ID
 
 ## Failure Modes & Consistency
 
-| Scenario | Behavior | Durability |
-|----------|----------|------------|
-| Cache read failure | Fall back to Marten | ✅ No data loss |
-| Cache write failure during overflow | Synchronous write to Marten | ✅ No data loss |
-| Drainer failure | Grain remains dirty, retried next cycle | ✅ Eventual consistency |
-| Marten write failure | Exception propagated to grain | ✅ No data loss |
-| Redis unavailable | Cache disabled, Marten-only mode | ✅ No data loss |
+| Scenario                            | Behavior                                | Durability             |
+|-------------------------------------|-----------------------------------------|------------------------|
+| Cache read failure                  | Fall back to Marten                     | ✅ No data loss         |
+| Cache write failure during overflow | Synchronous write to Marten             | ✅ No data loss         |
+| Drainer failure                     | Grain remains dirty, retried next cycle | ✅ Eventual consistency |
+| Marten write failure                | Exception propagated to grain           | ✅ No data loss         |
+| Redis unavailable                   | Cache disabled, Marten-only mode        | ✅ No data loss         |
 
 ### Consistency Guarantees
 
@@ -320,12 +320,12 @@ Cache features are automatically disabled; falls back to Marten-only mode.
 
 ### Tuning
 
-| Parameter | Impact | Recommendation |
-|-----------|--------|----------------|
-| `Threshold` | Lower = more overflow | Set to 1.2x expected peak writes/sec |
-| `BatchSize` | Larger = fewer cycles | 50-200 depending on grain size |
-| `DrainIntervalSeconds` | Lower = less lag | 5-10 seconds typical |
-| `StateTtlSeconds` | Longer = more cache hits | 300-600 for hot grains |
+| Parameter              | Impact                   | Recommendation                       |
+|------------------------|--------------------------|--------------------------------------|
+| `Threshold`            | Lower = more overflow    | Set to 1.2x expected peak writes/sec |
+| `BatchSize`            | Larger = fewer cycles    | 50-200 depending on grain size       |
+| `DrainIntervalSeconds` | Lower = less lag         | 5-10 seconds typical                 |
+| `StateTtlSeconds`      | Longer = more cache hits | 300-600 for hot grains               |
 
 ## Testing
 
