@@ -291,7 +291,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
             if (serviceType == typeof(IOptions<MartenStorageOptions>))
                 return _martenStorageOptions;
             if (serviceType == typeof(CacheToMartenWriter))
-                return new CacheToMartenWriter(_cache, _documentStore,
+                return new CacheToMartenWriter(_cache!, _documentStore,
                     new LoggerFactory().CreateLogger<CacheToMartenWriter>(), 
                     _writeBehindOptions,
                     _clusterOptions,
