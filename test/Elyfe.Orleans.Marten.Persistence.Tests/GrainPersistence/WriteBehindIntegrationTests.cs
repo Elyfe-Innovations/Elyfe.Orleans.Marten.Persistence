@@ -133,7 +133,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
                 EnableWriteBehind = false
             }
         });
-        var writeBehindOptions = OptionsHelper.Create(martenStorageOptions.Value.WriteBehind);
+        var writeBehindOptions = OptionsHelper.Create(martenStorageOptions.Value);
 
 
         var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
@@ -176,11 +176,15 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         if (_documentStore == null || _redis == null)
             throw new InvalidOperationException("Test containers not initialized");
 
-        var options = OptionsHelper.Create(new WriteBehindOptions
-        {
-            BatchSize = 10,
-            DrainIntervalSeconds = 1
-        });
+        var options = OptionsHelper.Create(
+            new MartenStorageOptions()
+            {
+                WriteBehind = new WriteBehindOptions
+                {
+                    BatchSize = 10,
+                    DrainIntervalSeconds = 1
+                }
+            });
 
         var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var logger = new LoggerFactory().CreateLogger<CacheToMartenWriter>();
@@ -203,7 +207,6 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
             cache,
             _documentStore,
             logger,
-            options,
             clusterOptions,
             martenOptions
         );
@@ -248,7 +251,6 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
     {
         private readonly IDocumentStore _documentStore;
         private readonly IConnectionMultiplexer _redis;
-        private readonly IOptions<WriteBehindOptions> _writeBehindOptions;
         private readonly IOptions<ClusterOptions> _clusterOptions;
         private readonly RedisGrainStateCache? _cache;
         private readonly IOptions<MartenStorageOptions> _martenStorageOptions;
@@ -263,12 +265,11 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
             _documentStore = documentStore;
             _redis = redis;
             _martenStorageOptions = martenStorageOptions;
-            _writeBehindOptions = OptionsHelper.Create(martenStorageOptions.Value.WriteBehind);
             _clusterOptions = clusterOptions;
             _cache = cache ?? new RedisGrainStateCache(
                 redis,
                 new LoggerFactory().CreateLogger<RedisGrainStateCache>(),
-                _writeBehindOptions,
+                _martenStorageOptions,
                 clusterOptions.Value.ServiceId
             );
         }
@@ -279,8 +280,6 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
                 return _documentStore;
             if (serviceType == typeof(IConnectionMultiplexer))
                 return _redis;
-            if (serviceType == typeof(IOptions<WriteBehindOptions>))
-                return _writeBehindOptions;
             if (serviceType == typeof(IOptions<ClusterOptions>))
                 return _clusterOptions;
             if (serviceType == typeof(RedisGrainStateCache))
@@ -291,8 +290,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
                 return _martenStorageOptions;
             if (serviceType == typeof(CacheToMartenWriter))
                 return new CacheToMartenWriter(_cache!, _documentStore,
-                    new LoggerFactory().CreateLogger<CacheToMartenWriter>(), 
-                    _writeBehindOptions,
+                    new LoggerFactory().CreateLogger<CacheToMartenWriter>(),
                     _clusterOptions,
                     _martenStorageOptions);
 

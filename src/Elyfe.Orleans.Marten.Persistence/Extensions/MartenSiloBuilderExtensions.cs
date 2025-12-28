@@ -30,7 +30,7 @@ public static class MartenSiloBuilderExtensions
             return builder.ConfigureServices(services =>
             {
                 // Ensure MartenStorageOptions is configured (with defaults if not already configured)
-                services.AddOptions<MartenStorageOptions>().BindConfiguration("Orleans:Persistence:Marten");
+                services.Configure<MartenStorageOptions>(builder.Configuration.GetSection("Orleans:Persistence:Marten"));
                 services.AddMartenGrainStorage(storageName);
             });
         }
@@ -58,6 +58,7 @@ public static class MartenSiloBuilderExtensions
                 var redisConnectionString = builder.Configuration.GetConnectionString("cache");
                 if (!string.IsNullOrEmpty(redisConnectionString))
                 {
+                    
                     services.AddKeyedSingleton<IConnectionMultiplexer>("writeBack",(s, p) =>
                     {
                         var config = ConfigurationOptions.Parse(redisConnectionString);
@@ -69,7 +70,7 @@ public static class MartenSiloBuilderExtensions
                     {
                         var redis = sp.GetRequiredKeyedService<IConnectionMultiplexer>("writeBack");
                         var logger = sp.GetRequiredService<ILogger<RedisGrainStateCache>>();
-                        var options = sp.GetRequiredService<IOptions<WriteBehindOptions>>();
+                        var options = sp.GetRequiredService<IOptions<MartenStorageOptions>>();
                         var clusterOptions = sp.GetRequiredService<IOptions<ClusterOptions>>();
                     
                         return new RedisGrainStateCache(redis, logger, options, clusterOptions.Value.ServiceId);
@@ -95,8 +96,11 @@ public static class MartenSiloBuilderExtensions
     }
 
 
-    public static IServiceCollection AddMartenGrainStorage(this IServiceCollection services, string storageName)
+    extension(IServiceCollection services)
     {
-        return services.AddGrainStorage(storageName, MartenGrainStorageFactory.Create);
+        public IServiceCollection AddMartenGrainStorage(string storageName)
+        {
+            return services.AddGrainStorage(storageName, MartenGrainStorageFactory.Create);
+        }
     }
 }

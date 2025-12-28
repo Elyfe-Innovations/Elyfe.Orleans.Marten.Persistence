@@ -68,6 +68,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             // Read-through cache: check cache first if enabled
             if (_cache != null && _martenOptions.WriteBehind.EnableReadThrough)
             {
+                _logger.LogTrace("Checking cache for grain {GrainId} in storage {StorageName}", grainId, _storageName);
                 var cached = await _cache.ReadAsync<T>(_storageName, grainId);
                 if (cached != null)
                 {
@@ -152,7 +153,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
     public async Task WriteStateAsync<T>(string grainType, GrainId grainId, IGrainState<T> grainState)
     {
-        using var activity = CreateLinkedActivity($"{_storageName}.WriteStateAsync");   
+        using var activity = CreateLinkedActivity($"{_storageName}.WriteStateAsync");
         try
         {
             if (_logger.IsEnabled(LogLevel.Trace))
@@ -164,11 +165,10 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             var lastModified = state.LastModified.ToUnixTimeMilliseconds();
 
             // Check write surge if write-behind is enabled
-            bool overflow = false;
             if (_cache != null && _martenOptions.WriteBehind.EnableWriteBehind)
             {
                 var writeCount = await _cache.IncrementWriteCounterAsync(_storageName);
-                overflow = writeCount > _martenOptions.WriteBehind.Threshold;
+                var overflow = writeCount > _martenOptions.WriteBehind.Threshold;
 
                 if (overflow)
                 {
@@ -186,8 +186,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                         grainState.ETag = newETag;
                         grainState.RecordExists = true;
 
-                        if (_logger.IsEnabled(LogLevel.Trace))
-                            _logger.LogTrace("Grain {GrainId} state written to cache and marked dirty", grainId);
+                        _logger.LogTrace("Grain {GrainId} state written to cache and marked dirty", grainId);
 
                         return;
                     }
@@ -213,10 +212,11 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 if (existingDocument != null)
                 {
                     var currentETag = existingDocument.Etag;
-                    /*if (grainState.ETag != currentETag)
+                    if (_martenOptions.CheckConcurrency && grainState.ETag != currentETag)
                     {
-                        throw new InconsistentStateException($"ETag mismatch for grain {grainId}. Expected: {grainState.ETag}, Actual: {currentETag}");
-                    }*/
+                        throw new InconsistentStateException(
+                            $"ETag mismatch for grain {grainId}. Expected: {grainState.ETag}, Actual: {currentETag}");
+                    }
                 }
             }
 
@@ -245,6 +245,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 e.Message);
             // Rethrow the exception to propagate the error to the caller.
             activity?.AddException(e);
+            throw;
         }
         finally
         {
@@ -275,24 +276,23 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     {
         return $"{_clusterService}_{grainId.ToString().Replace('/', '_')}";
     }
-    
-    
+
+
     /// <summary>
     /// Creates a new Activity linked to the parent trace context stored in grain state
     /// </summary>
     private Activity? CreateLinkedActivity(string operationName)
     {
-        
         try
         {
             var parentContext = Activity.Current?.Context;
 
-            var activity =parentContext is null?
-                    _activitySource.StartActivity(operationName)
+            var activity = parentContext is null
+                ? _activitySource.StartActivity(operationName)
                 : _activitySource.StartActivity(
-                operationName,
-                ActivityKind.Internal,
-                parentContext.Value);
+                    operationName,
+                    ActivityKind.Internal,
+                    parentContext.Value);
 
             return activity;
         }

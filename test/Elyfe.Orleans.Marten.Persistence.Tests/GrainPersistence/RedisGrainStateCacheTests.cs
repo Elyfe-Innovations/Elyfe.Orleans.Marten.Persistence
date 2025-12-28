@@ -16,11 +16,11 @@ public class RedisGrainStateCacheTests
         // This tests the key generation logic
         var grainId = GrainId.Parse("test/grain/123");
         var expectedKey = "test_grain_123";
-        
+
         // The actual key generation happens in RedisGrainStateCache.GetGrainKey
         // We verify the logic by checking that GrainId.ToString() contains slashes
         grainId.ToString().Should().Contain("/");
-        
+
         // And that our expected key format is underscore-separated
         expectedKey.Should().NotContain("/");
     }
@@ -30,9 +30,9 @@ public class RedisGrainStateCacheTests
     {
         var serviceId = "test-service";
         var storageName = "TestStorage";
-        
+
         var expectedPattern = $"mgs:{serviceId}:{storageName}";
-        
+
         // Key should follow pattern: mgs:{serviceId}:{storageName}:state (without tenant)
         expectedPattern.Should().StartWith("mgs:");
     }
@@ -42,9 +42,9 @@ public class RedisGrainStateCacheTests
     {
         var serviceId = "test-service";
         var storageName = "TestStorage";
-        
+
         var expectedPattern = $"mgs:{serviceId}:{storageName}";
-        
+
         // Key should follow pattern: mgs:{serviceId}:{storageName}:dirty (without tenant)
         expectedPattern.Should().StartWith("mgs:");
     }
@@ -54,9 +54,9 @@ public class RedisGrainStateCacheTests
     {
         var serviceId = "test-service";
         var storageName = "TestStorage";
-        
+
         var expectedKey = $"mgs:{serviceId}:{storageName}:wcount";
-        
+
         expectedKey.Should().Be(expectedKey);
     }
 
@@ -65,9 +65,9 @@ public class RedisGrainStateCacheTests
     {
         var serviceId = "test-service";
         var storageName = "TestStorage";
-        
+
         var expectedKey = $"mgs:{serviceId}:{storageName}:drain-lock";
-        
+
         expectedKey.Should().Be(expectedKey);
     }
 
@@ -93,7 +93,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(true);
 
-        var options = OptionsHelper.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new MartenStorageOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -101,7 +101,7 @@ public class RedisGrainStateCacheTests
         var count = await cache.IncrementWriteCounterAsync("TestStorage");
 
         count.Should().Be(1);
-        
+
         // Verify expiration was set
         mockDb.Verify(db => db.KeyExpireAsync(
             It.IsAny<RedisKey>(),
@@ -122,12 +122,10 @@ public class RedisGrainStateCacheTests
             It.IsAny<RedisKey>(),
             It.IsAny<RedisValue>(),
             It.IsAny<TimeSpan?>(),
-            It.IsAny<bool>(),
-            When.NotExists,
-            It.IsAny<CommandFlags>()
+            When.NotExists
         )).ReturnsAsync(true);
 
-        var options = OptionsHelper.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new MartenStorageOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -153,7 +151,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(false);
 
-        var options = OptionsHelper.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new MartenStorageOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -172,15 +170,18 @@ public class RedisGrainStateCacheTests
 
         RedisValue capturedValue = RedisValue.Null;
         mockDb.Setup(db => db.HashSetAsync(
-            It.IsAny<RedisKey>(),
-            It.IsAny<RedisValue>(),
-            It.IsAny<RedisValue>(),
-            It.IsAny<When>(),
-            It.IsAny<CommandFlags>()
-        )).Callback<RedisKey, RedisValue, RedisValue, When, CommandFlags>((k, f, v, w, c) => capturedValue = v)
-          .ReturnsAsync(true);
+                It.IsAny<RedisKey>(),
+                It.IsAny<RedisValue>(),
+                It.IsAny<RedisValue>(),
+                It.IsAny<When>(),
+                It.IsAny<CommandFlags>()
+            )).Callback<RedisKey, RedisValue, RedisValue, When, CommandFlags>((k, f, v, w, c) => capturedValue = v)
+            .ReturnsAsync(true);
 
-        var options = OptionsHelper.Create(new WriteBehindOptions { StateTtlSeconds = 300 });
+        var options = OptionsHelper.Create(new MartenStorageOptions()
+        {
+            WriteBehind = new WriteBehindOptions { StateTtlSeconds = 300 }
+        });
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -226,7 +227,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(true);
 
-        var options = OptionsHelper.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new MartenStorageOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -255,7 +256,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(true);
 
-        var options = OptionsHelper.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new MartenStorageOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -285,7 +286,7 @@ public class RedisGrainStateCacheTests
             It.IsAny<CommandFlags>()
         )).ReturnsAsync(dirtyKeys);
 
-        var options = OptionsHelper.Create(new WriteBehindOptions());
+        var options = OptionsHelper.Create(new MartenStorageOptions());
         var logger = Mock.Of<ILogger<RedisGrainStateCache>>();
 
         var cache = new RedisGrainStateCache(mockRedis.Object, logger, options, "test-service");
@@ -298,4 +299,3 @@ public class RedisGrainStateCacheTests
         keys.Should().Contain("grain3");
     }
 }
-

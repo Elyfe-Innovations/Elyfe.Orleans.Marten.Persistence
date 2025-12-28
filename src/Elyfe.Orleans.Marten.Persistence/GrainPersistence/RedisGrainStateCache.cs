@@ -14,11 +14,11 @@ namespace Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 public class RedisGrainStateCache(
     IConnectionMultiplexer redis,
     ILogger<RedisGrainStateCache> logger,
-    IOptions<WriteBehindOptions> options,
+    IOptions<MartenStorageOptions> options,
     string serviceId)
     : IGrainStateCache
 {
-    private readonly WriteBehindOptions _options = options.Value;
+    private readonly MartenStorageOptions _storageOptions = options.Value;
 
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -30,19 +30,21 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var stateHashKey = GetStateHashKey(storageName);
-            
+
             var json = await db.HashGetAsync(stateHashKey, grainKey);
             if (!json.HasValue)
             {
+                logger.LogTrace("Cache Miss for grain {GrainId} from storage {StorageName}.", grainId, storageName);
                 return null;
             }
 
-            var dto = JsonSerializer.Deserialize<CacheDto<T>>(json.ToString()!, _jsonOptions);
+            var dto = JsonSerializer.Deserialize<CacheDto<T?>?>(json.ToString()!, _jsonOptions);
             if (dto == null)
             {
+                logger.LogWarning("Failed to deserialize cached state for grain {GrainId} from storage {StorageName}.", grainId, storageName);
                 return null;
             }
 
@@ -61,7 +63,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var stateHashKey = GetStateHashKey(storageName);
 
@@ -71,9 +73,10 @@ public class RedisGrainStateCache(
             await db.HashSetAsync(stateHashKey, grainKey, json);
 
             // Apply TTL if configured
-            if (_options.StateTtlSeconds > 0)
+            if (_storageOptions.WriteBehind.StateTtlSeconds > 0)
             {
-                await db.KeyExpireAsync(stateHashKey, TimeSpan.FromSeconds(_options.StateTtlSeconds));
+                await db.KeyExpireAsync(stateHashKey,
+                    TimeSpan.FromSeconds(_storageOptions.WriteBehind.StateTtlSeconds));
             }
         }
         catch (Exception ex)
@@ -88,7 +91,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var stateHashKey = GetStateHashKey(storageName);
 
@@ -105,7 +108,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var dirtySetKey = GetDirtySetKey(storageName);
 
@@ -124,7 +127,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var grainKey = GetGrainKey(grainId);
             var dirtySetKey = GetDirtySetKey(storageName);
 
@@ -142,7 +145,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var dirtySetKey = GetDirtySetKey(storageName);
 
             var members = await db.SetPopAsync(dirtySetKey, batchSize);
@@ -160,7 +163,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var wcountKey = GetWriteCounterKey(storageName);
 
             var count = await db.StringIncrementAsync(wcountKey);
@@ -185,10 +188,11 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var lockKey = GetDrainLockKey(storageName);
 
-            return await db.StringSetAsync(lockKey, "locked", lockTtl, When.NotExists);
+            var drainLockObject = await db.StringSetAsync(lockKey, "locked", lockTtl, When.NotExists);
+            return drainLockObject;
         }
         catch (Exception ex)
         {
@@ -201,7 +205,7 @@ public class RedisGrainStateCache(
     {
         try
         {
-            var db = redis.GetDatabase(_options.CacheDatabase);
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
             var lockKey = GetDrainLockKey(storageName);
 
             await db.KeyDeleteAsync(lockKey);
@@ -241,8 +245,13 @@ public class RedisGrainStateCache(
 
     private string GetTenantPart()
     {
-        // Try to get tenant from Orleans RequestContext
-        var tenantId = RequestContext.Get("tenantId") as string;
-        return string.IsNullOrEmpty(tenantId) ? string.Empty : $":tenant:{tenantId}";
+        // Try to get the tenant from Orleans RequestContext
+        var tenantContext = RequestContext.Get("TenantId");
+        if (tenantContext is string tenantId && !string.IsNullOrWhiteSpace(tenantId))
+        {
+            return $":tenant:{tenantId}";
+        }
+
+        return string.Empty;
     }
 }

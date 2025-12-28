@@ -19,7 +19,6 @@ public class CacheToMartenWriter : BackgroundService
     private readonly IGrainStateCache _cache;
     private readonly IDocumentStore _documentStore;
     private readonly ILogger<CacheToMartenWriter> _logger;
-    private readonly WriteBehindOptions _options;
     private readonly MartenStorageOptions _martenOptions;
     private readonly string _serviceId;
     private readonly JsonSerializerOptions _jsonOptions;
@@ -29,14 +28,12 @@ public class CacheToMartenWriter : BackgroundService
         IGrainStateCache cache,
         IDocumentStore documentStore,
         ILogger<CacheToMartenWriter> logger,
-        IOptions<WriteBehindOptions> options,
         IOptions<ClusterOptions> clusterOptions,
         IOptions<MartenStorageOptions> martenOptions)
     {
         _cache = cache;
         _documentStore = documentStore;
         _logger = logger;
-        _options = options.Value;
         _martenOptions = martenOptions.Value;
         _serviceId = clusterOptions.Value.ServiceId;
         _jsonOptions = new JsonSerializerOptions
@@ -47,15 +44,16 @@ public class CacheToMartenWriter : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("MartenWriteBehindDrainer starting with interval {IntervalSeconds}s, batch size {BatchSize}",
-            _options.DrainIntervalSeconds, _options.BatchSize);
+        _logger.LogInformation(
+            "MartenWriteBehindDrainer starting with interval {IntervalSeconds}s, batch size {BatchSize}",
+            _martenOptions.WriteBehind.DrainIntervalSeconds, _martenOptions.WriteBehind.BatchSize);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await DrainAsync(stoppingToken);
-                await Task.Delay(TimeSpan.FromSeconds(_options.DrainIntervalSeconds), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(_martenOptions.WriteBehind.DrainIntervalSeconds), stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -73,7 +71,6 @@ public class CacheToMartenWriter : BackgroundService
 
     private async Task DrainAsync(CancellationToken cancellationToken)
     {
-        
         foreach (var storageName in _storageNames)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -85,9 +82,9 @@ public class CacheToMartenWriter : BackgroundService
     private async Task DrainStorageAsync(string storageName, CancellationToken cancellationToken)
     {
         // Try to acquire lock
-        var lockTtl = TimeSpan.FromSeconds(_options.DrainLockTtlSeconds);
+        var lockTtl = TimeSpan.FromSeconds(_martenOptions.WriteBehind.DrainLockTtlSeconds);
         var acquired = await _cache.TryAcquireDrainLockAsync(storageName, lockTtl, cancellationToken);
-        
+
         if (!acquired)
         {
             if (_logger.IsEnabled(LogLevel.Debug))
@@ -97,7 +94,8 @@ public class CacheToMartenWriter : BackgroundService
 
         try
         {
-            var dirtyKeys = await _cache.GetDirtyKeysAsync(storageName, _options.BatchSize, cancellationToken);
+            var dirtyKeys =
+                await _cache.GetDirtyKeysAsync(storageName, _martenOptions.WriteBehind.BatchSize, cancellationToken);
             if (dirtyKeys.Count == 0)
             {
                 return;
@@ -172,26 +170,27 @@ public class CacheToMartenWriter : BackgroundService
         var genericType = typeof(MartenGrainData<>).MakeGenericType(cached.stateType);
         var document = genericType
             .GetMethod("Create")?
-            .Invoke(null, new object?[]{ cached.Data, martenId})!;
+            .Invoke(null, new object?[] { cached.Data, martenId })!;
 
         // Create MartenGrainData document
         // var document = MartenGrainData.Create(cached.Data, martenId);
 
         // Upsert to Marten
-        await using var session = _martenOptions.UseTenantPerStorage 
-            ? _documentStore.LightweightSession(storageName) 
+        await using var session = _martenOptions.UseTenantPerStorage
+            ? _documentStore.LightweightSession(storageName)
             : _documentStore.LightweightSession();
         session.Store(document);
         await session.SaveChangesAsync(cancellationToken);
 
         // Update cache with new lastModified and etag
         var newETag = document.GetType()
-            .GetMethod("GenerateETag",  BindingFlags.Instance | BindingFlags.Public)!
-            .Invoke(document, new object?[]{}) as string
-            ?? throw new InvalidOperationException("Failed to generate ETag for cached grain state");
-        var newModified = DateTimeOffset.Parse( document.GetType()
-            .GetProperty("LastModified")!.GetValue(document)!.ToString()! );
-        await _cache.WriteAsync(storageName, grainId, cached.Data, newETag, newModified.ToUnixTimeMilliseconds(), cancellationToken);
+                          .GetMethod("GenerateETag", BindingFlags.Instance | BindingFlags.Public)!
+                          .Invoke(document, new object?[] { }) as string
+                      ?? throw new InvalidOperationException("Failed to generate ETag for cached grain state");
+        var newModified = DateTimeOffset.Parse(document.GetType()
+            .GetProperty("LastModified")!.GetValue(document)!.ToString()!);
+        await _cache.WriteAsync(storageName, grainId, cached.Data, newETag, newModified.ToUnixTimeMilliseconds(),
+            cancellationToken);
 
         // Clear dirty marker
         await _cache.ClearDirtyAsync(storageName, grainId, cancellationToken);
@@ -205,7 +204,7 @@ public class CacheToMartenWriter : BackgroundService
         var lastModified = state.LastModified.ToUnixTimeMilliseconds();
         var dataJson = JsonSerializer.Serialize(state.Data);
         var combined = $"{lastModified}_{dataJson}";
-        
+
         using var hash = System.Security.Cryptography.SHA256.Create();
         var hashBytes = hash.ComputeHash(System.Text.Encoding.UTF8.GetBytes(combined));
         return Convert.ToBase64String(hashBytes);
@@ -216,5 +215,3 @@ public class CacheToMartenWriter : BackgroundService
         _storageNames.Add(storageName);
     }
 }
-
-

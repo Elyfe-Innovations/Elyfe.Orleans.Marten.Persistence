@@ -71,26 +71,27 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
             throw new InvalidOperationException("Test containers not initialized");
 
         // Arrange
-        var options = OptionsHelper.Create(new WriteBehindOptions
+        var martenOptions = OptionsHelper.Create(new MartenStorageOptions
         {
-            BatchSize = 10,
-            DrainIntervalSeconds = 1,
-            Threshold = 0 // Force overflow
+            UseTenantPerStorage = true,
+            WriteBehind = new WriteBehindOptions
+            {
+                BatchSize = 10,
+                DrainIntervalSeconds = 1,
+                Threshold = 0 // Force overflow
+            }
         });
-
-        var martenOptions = OptionsHelper.Create(new MartenStorageOptions { UseTenantPerStorage = true });
         var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var logger = new LoggerFactory().CreateLogger<CacheToMartenWriter>();
         var cacheLogger = new LoggerFactory().CreateLogger<RedisGrainStateCache>();
 
-        var cache = new RedisGrainStateCache(_redis, cacheLogger, options, "test-cluster");
+        var cache = new RedisGrainStateCache(_redis, cacheLogger, martenOptions, "test-cluster");
 
         // Create drainer
         var drainer = new CacheToMartenWriter(
             cache,
             _documentStore,
             logger,
-            options,
             clusterOptions,
             martenOptions
         );
@@ -152,24 +153,27 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
             throw new InvalidOperationException("Test containers not initialized");
 
         // Arrange
-        var options = OptionsHelper.Create(new WriteBehindOptions
+        var martenOptions = OptionsHelper.Create(new MartenStorageOptions
         {
-            Threshold = 0, // Force overflow
-            EnableWriteBehind = true,
-            EnableReadThrough = true,
-            BatchSize = 10,
-            DrainIntervalSeconds = 1
+            UseTenantPerStorage = true,
+            WriteBehind = new WriteBehindOptions
+            {
+                Threshold = 0, // Force overflow
+                EnableWriteBehind = true,
+                EnableReadThrough = true,
+                BatchSize = 10,
+                DrainIntervalSeconds = 1
+            }
         });
-
-        var martenOptions = OptionsHelper.Create(new MartenStorageOptions { UseTenantPerStorage = true });
         var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
         var hostEnv = new MockHostEnvironment();
         var storageLogger = new LoggerFactory().CreateLogger<MartenGrainStorage>();
         var drainerLogger = new LoggerFactory().CreateLogger<CacheToMartenWriter>();
         var cacheLogger = new LoggerFactory().CreateLogger<RedisGrainStateCache>();
 
-        var cache = new RedisGrainStateCache(_redis, cacheLogger, options, "test-cluster");
-        var serviceProvider = new MockServiceProvider(_documentStore, _redis, options, clusterOptions, martenOptions, cache);
+        var cache = new RedisGrainStateCache(_redis, cacheLogger,martenOptions, "test-cluster");
+        var serviceProvider =
+            new MockServiceProvider(_documentStore, _redis, clusterOptions, martenOptions, cache);
 
         // Create storage instances
         var financeStorage = new MartenGrainStorage(
@@ -191,7 +195,8 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         );
 
         // Create and start drainer
-        var drainer = new CacheToMartenWriter(cache, _documentStore, drainerLogger, options, clusterOptions, martenOptions);
+        var drainer =
+            new CacheToMartenWriter(cache, _documentStore, drainerLogger, clusterOptions, martenOptions);
         drainer.RegisterStorage("finance");
         drainer.RegisterStorage("ussd");
 
@@ -248,12 +253,15 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var drainerLogger = new LoggerFactory().CreateLogger<CacheToMartenWriter>();
         var cacheLogger = new LoggerFactory().CreateLogger<RedisGrainStateCache>();
 
-        var cache = new RedisGrainStateCache(_redis, cacheLogger, options, "test-cluster");
-        var serviceProvider = new MockServiceProvider(_documentStore, _redis, options, clusterOptions, martenOptions, cache);
+        var cache = new RedisGrainStateCache(_redis, cacheLogger, martenOptions, "test-cluster");
+        var serviceProvider =
+            new MockServiceProvider(_documentStore, _redis, clusterOptions, martenOptions, cache);
 
-        var storage = new MartenGrainStorage("sms", _documentStore, serviceProvider, storageLogger, clusterOptions, hostEnv);
+        var storage = new MartenGrainStorage("sms", _documentStore, serviceProvider, storageLogger, clusterOptions,
+            hostEnv);
 
-        var drainer = new CacheToMartenWriter(cache, _documentStore, drainerLogger, options, clusterOptions, martenOptions);
+        var drainer =
+            new CacheToMartenWriter(cache, _documentStore, drainerLogger, clusterOptions, martenOptions);
         drainer.RegisterStorage("sms");
 
         var cts = new CancellationTokenSource();
@@ -295,7 +303,6 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
     {
         private readonly IDocumentStore _documentStore;
         private readonly IConnectionMultiplexer _redis;
-        private readonly IOptions<WriteBehindOptions> _options;
         private readonly IOptions<ClusterOptions> _clusterOptions;
         private readonly IOptions<MartenStorageOptions> _martenOptions;
         private readonly RedisGrainStateCache _cache;
@@ -303,14 +310,12 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         public MockServiceProvider(
             IDocumentStore documentStore,
             IConnectionMultiplexer redis,
-            IOptions<WriteBehindOptions> options,
             IOptions<ClusterOptions> clusterOptions,
             IOptions<MartenStorageOptions> martenOptions,
             RedisGrainStateCache cache)
         {
             _documentStore = documentStore;
             _redis = redis;
-            _options = options;
             _clusterOptions = clusterOptions;
             _martenOptions = martenOptions;
             _cache = cache;
@@ -322,8 +327,6 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
                 return _documentStore;
             if (serviceType == typeof(IConnectionMultiplexer))
                 return _redis;
-            if (serviceType == typeof(IOptions<WriteBehindOptions>))
-                return _options;
             if (serviceType == typeof(IOptions<ClusterOptions>))
                 return _clusterOptions;
             if (serviceType == typeof(IOptions<MartenStorageOptions>))
@@ -335,7 +338,8 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
             if (serviceType == typeof(CacheToMartenWriter))
             {
                 var logger = new LoggerFactory().CreateLogger<CacheToMartenWriter>();
-                var drainer = new CacheToMartenWriter(_cache, _documentStore, logger, _options, _clusterOptions, _martenOptions);
+                var drainer = new CacheToMartenWriter(_cache, _documentStore, logger, _clusterOptions,
+                    _martenOptions);
                 return drainer;
             }
 

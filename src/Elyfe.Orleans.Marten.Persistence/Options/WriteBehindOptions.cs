@@ -38,11 +38,11 @@ public class WriteBehindOptions
     /// <summary>
     /// Enable write-behind overflow to cache.
     /// </summary>
-    public bool EnableWriteBehind { get; set; } = true;
+    public bool EnableWriteBehind { get; set; } = false;
 
     /// <summary>
     /// Enable read-through cache.
     /// </summary>
-    public bool EnableReadThrough { get; set; } = true;
+    public bool EnableReadThrough { get; set; } = false;
 }
 
