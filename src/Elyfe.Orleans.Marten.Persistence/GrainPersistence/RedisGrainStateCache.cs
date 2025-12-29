@@ -223,14 +223,14 @@ public class RedisGrainStateCache(
 
     private string GetStateHashKey(string storageName)
     {
-        var tenantPart = GetTenantPart();
-        return $"mgs:{serviceId}:{storageName}{tenantPart}:state";
+        // Note: Cache keys are NOT tenant-scoped because RequestContext is not available during grain activation.
+        // The grain ID itself is unique per message/entity, and tenant authorization is handled at the grain level.
+        return $"mgs:{serviceId}:{storageName}:state";
     }
 
     private string GetDirtySetKey(string storageName)
     {
-        var tenantPart = GetTenantPart();
-        return $"mgs:{serviceId}:{storageName}{tenantPart}:dirty";
+        return $"mgs:{serviceId}:{storageName}:dirty";
     }
 
     private string GetWriteCounterKey(string storageName)
@@ -241,17 +241,5 @@ public class RedisGrainStateCache(
     private string GetDrainLockKey(string storageName)
     {
         return $"mgs:{serviceId}:{storageName}:drain-lock";
-    }
-
-    private string GetTenantPart()
-    {
-        // Try to get the tenant from Orleans RequestContext
-        var tenantContext = RequestContext.Get("TenantId");
-        if (tenantContext is string tenantId && !string.IsNullOrWhiteSpace(tenantId))
-        {
-            return $":tenant:{tenantId}";
-        }
-
-        return string.Empty;
     }
 }
