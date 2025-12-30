@@ -25,7 +25,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     private readonly ILogger<MartenGrainStorage> _logger;
     private readonly IHostEnvironment _environment;
     private readonly MartenStorageOptions _martenOptions;
-    private readonly ActivitySource _activitySource = new ActivitySource("Elyfe.Orleans.Marten.Persistence");
+    private readonly ActivitySource _activitySource = new("Elyfe.Orleans.Marten.Persistence");
 
     public MartenGrainStorage(string storageName,
         IDocumentStore documentStore,
@@ -46,7 +46,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
     public async Task ClearStateAsync<T>(string grainType, GrainId grainId, IGrainState<T> grainState)
     {
-        using var activity = CreateLinkedActivity($"{_storageName}.ClearStateAsync");
+        using var activity = CreateLinkedDbActivity($"{_storageName}.ClearStateAsync", grainType);
         _logger.LogTrace($"Clearing state for grain {grainId} of type {grainType}.");
 
         await using var session = _martenOptions.UseTenantPerStorage
@@ -59,7 +59,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
     public async Task ReadStateAsync<T>(string stateName, GrainId grainId, IGrainState<T> grainState)
     {
-        using var activity = CreateLinkedActivity($"{_storageName}.ReadStateAsync");
+        using var activity = CreateLinkedDbActivity($"{_storageName}.ReadStateAsync", stateName);
         try
         {
             if (_logger.IsEnabled(LogLevel.Trace))
@@ -153,7 +153,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
     public async Task WriteStateAsync<T>(string grainType, GrainId grainId, IGrainState<T> grainState)
     {
-        using var activity = CreateLinkedActivity($"{_storageName}.WriteStateAsync");
+        using var activity = CreateLinkedDbActivity($"{_storageName}.WriteStateAsync", grainType);
         try
         {
             if (_logger.IsEnabled(LogLevel.Trace))
@@ -281,7 +281,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     /// <summary>
     /// Creates a new Activity linked to the parent trace context stored in grain state
     /// </summary>
-    private Activity? CreateLinkedActivity(string operationName)
+    private Activity? CreateLinkedDbActivity( string operationName, string stateName)
     {
         try
         {
@@ -293,7 +293,10 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                     operationName,
                     ActivityKind.Internal,
                     parentContext.Value);
-
+            if (activity is null) return activity;
+            activity.AddTag("db.name", stateName);
+            activity.AddTag("db.system", "marten");
+            activity.AddTag("db.operation", operationName);
             return activity;
         }
         catch (Exception ex)
