@@ -5,8 +5,10 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\..\src\Elyfe.Analyzers.Orleans.MartenSchema\Elyfe.Analyzers.Orleans.MartenSchema.csproj" />
-        <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Analyzer.Testing.XUnit" />
-        <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Analyzer.Testing" />
+        <PackageReference Include="Microsoft.CodeAnalysis" />
+        <PackageReference Include="Microsoft.CodeAnalysis.Scripting" />
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
         <PackageReference Include="xunit" />
         <PackageReference Include="xunit.runner.visualstudio">
