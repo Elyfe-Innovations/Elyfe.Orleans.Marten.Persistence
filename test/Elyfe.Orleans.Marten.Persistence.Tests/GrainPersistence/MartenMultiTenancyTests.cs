@@ -1,3 +1,4 @@
+using System.Linq;
 using AwesomeAssertions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 using JasperFx;
