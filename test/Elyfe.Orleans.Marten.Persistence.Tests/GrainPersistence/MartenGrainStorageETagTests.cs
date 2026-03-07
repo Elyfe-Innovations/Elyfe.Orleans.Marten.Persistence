@@ -25,8 +25,7 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
 
     public MartenGrainStorageETagTests()
     {
-        _postgreSqlContainer = new PostgreSqlBuilder()
-            .WithImage("postgres:15")
+        _postgreSqlContainer = new PostgreSqlBuilder("timescaledb:latest-pg17")
             .WithDatabase("test_etag_db")
             .WithUsername("testuser")
             .WithPassword("testpass")

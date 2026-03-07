@@ -26,12 +26,10 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _postgresContainer = new PostgreSqlBuilder()
-            .WithImage("postgres:16-alpine")
+        _postgresContainer = new PostgreSqlBuilder("timescaledb:latest-pg17")
             .Build();
 
-        _redisContainer = new RedisBuilder()
-            .WithImage("redis:7-alpine")
+        _redisContainer = new RedisBuilder("redis:8-alpine")
             .Build();
 
         await _postgresContainer.StartAsync();

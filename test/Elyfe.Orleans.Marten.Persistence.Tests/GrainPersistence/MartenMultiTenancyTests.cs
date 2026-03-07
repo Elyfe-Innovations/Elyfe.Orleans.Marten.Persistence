@@ -25,8 +25,7 @@ public class MartenMultiTenancyTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _postgresContainer = new PostgreSqlBuilder()
-            .WithImage("postgres:16-alpine")
+        _postgresContainer = new PostgreSqlBuilder("timescaledb:latest-pg17")
             .Build();
 
         await _postgresContainer.StartAsync();
