@@ -134,14 +134,12 @@ public class MartenGrainSchemaAnalyzer : DiagnosticAnalyzer
         var persistentStateAttr = parameterSymbol.GetAttributes().FirstOrDefault(attr =>
             SymbolEqualityComparer.Default.Equals(attr.AttributeClass?.OriginalDefinition, persistentStateAttributeSymbol));
 
-        if (persistentStateAttr?.ConstructorArguments.Length == 2 &&
-            persistentStateAttr.ConstructorArguments[1].Value is string storageName)
+        if (persistentStateAttr?.ConstructorArguments.Length != 2 ||
+            persistentStateAttr.ConstructorArguments[1].Value is not string storageName) return;
+        if (parameterSymbol.Type is INamedTypeSymbol { IsGenericType: true } persistentStateType &&
+            SymbolEqualityComparer.Default.Equals(persistentStateType.OriginalDefinition, iPersistentStateSymbol))
         {
-            if (parameterSymbol.Type is INamedTypeSymbol { IsGenericType: true } persistentStateType &&
-                SymbolEqualityComparer.Default.Equals(persistentStateType.OriginalDefinition, iPersistentStateSymbol))
-            {
-                persistentStateParameters.Add((parameterSymbol, storageName));
-            }
+            persistentStateParameters.Add((parameterSymbol, storageName));
         }
     }
 
@@ -157,18 +155,13 @@ public class MartenGrainSchemaAnalyzer : DiagnosticAnalyzer
 
         foreach (var (parameter, storageName) in persistentStateParameters)
         {
-            if (martenProviders.Contains(storageName))
-            {
-                var persistentStateType = (INamedTypeSymbol)parameter.Type;
-                var stateTypeSymbol = persistentStateType.TypeArguments[0];
+            if (!martenProviders.Contains(storageName)) continue;
+            var persistentStateType = (INamedTypeSymbol)parameter.Type;
+            var stateTypeSymbol = persistentStateType.TypeArguments[0];
 
-                if (!registeredTypes.Contains(stateTypeSymbol))
-
-                {
-                    var diagnostic = Diagnostic.Create(Rule, parameter.Locations.FirstOrDefault(), stateTypeSymbol.Name, storageName);
-                    context.ReportDiagnostic(diagnostic);
-                }
-            }
+            if (registeredTypes.Contains(stateTypeSymbol)) continue;
+            var diagnostic = Diagnostic.Create(Rule, parameter.Locations.FirstOrDefault(), stateTypeSymbol.Name, storageName);
+            context.ReportDiagnostic(diagnostic);
         }
     }
 }
