@@ -201,13 +201,8 @@ public class CacheToMartenWriter : BackgroundService
 
     private static string GenerateETag<T>(MartenGrainData<T> state)
     {
-        var lastModified = state.LastModified.ToUnixTimeMilliseconds();
-        var dataJson = JsonSerializer.Serialize(state.Data);
-        var combined = $"{lastModified}_{dataJson}";
-
-        using var hash = System.Security.Cryptography.SHA256.Create();
-        var hashBytes = hash.ComputeHash(System.Text.Encoding.UTF8.GetBytes(combined));
-        return Convert.ToBase64String(hashBytes);
+        // Delegate to the model method which uses streaming hash to avoid OOM on large states
+        return state.GenerateETag();
     }
 
     public void RegisterStorage(string storageName)
