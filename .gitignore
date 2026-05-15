@@ -349,6 +349,8 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
+# Language Server Cache
+*.lscache
 !appsettings.Menu*.json
 appsettings.*.json
 src/Events/src/Tech231.Platform.Events.USSD/Properties/ServiceDependencies
