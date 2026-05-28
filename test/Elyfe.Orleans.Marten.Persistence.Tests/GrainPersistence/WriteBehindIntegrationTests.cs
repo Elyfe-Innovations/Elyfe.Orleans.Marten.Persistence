@@ -26,7 +26,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _postgresContainer = new PostgreSqlBuilder("timescaledb:latest-pg17")
+        _postgresContainer = new PostgreSqlBuilder("timescale/timescaledb:latest-pg17")
             .Build();
 
         _redisContainer = new RedisBuilder("redis:8-alpine")
