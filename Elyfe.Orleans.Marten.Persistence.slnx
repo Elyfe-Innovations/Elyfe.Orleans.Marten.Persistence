@@ -2,9 +2,11 @@
     <Folder Name="/src/">
         <Project Path="src/Elyfe.Analyzers.Orleans.MartenSchema/Elyfe.Analyzers.Orleans.MartenSchema.csproj" />
         <Project Path="src/Elyfe.Orleans.Marten.Persistence/Elyfe.Orleans.Marten.Persistence.csproj" />
+        <Project Path="src/Elyfe.Orleans.Marten.Reminders/Elyfe.Orleans.Marten.Reminders.csproj" />
     </Folder>
     <Folder Name="/test/">
         <Project Path="test/Elyfe.Analyzers.Orleans.MartenSchema.Tests/Elyfe.Analyzers.Orleans.MartenSchema.Tests.csproj" />
         <Project Path="test/Elyfe.Orleans.Marten.Persistence.Tests/Elyfe.Orleans.Marten.Persistence.Tests.csproj" />
+        <Project Path="test/Elyfe.Orleans.Marten.Reminders.Tests/Elyfe.Orleans.Marten.Reminders.Tests.csproj" />
     </Folder>
 </Solution>
