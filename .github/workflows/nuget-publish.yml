@@ -15,7 +15,7 @@ jobs:
     name: Build and Pack
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
-      nuget_version: ${{ steps.gitversion.outputs.nuGetVersionV2 }}
+      nuget_version: ${{ steps.gitversion.outputs.semVer }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -52,9 +52,9 @@ jobs:
 
       - name: Pack Projects
         run: |
-          dotnet pack src/Elyfe.Orleans.Marten.Persistence/Elyfe.Orleans.Marten.Persistence.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }}
-          dotnet pack src/Elyfe.Analyzers.Orleans.MartenSchema/Elyfe.Analyzers.Orleans.MartenSchema.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }}
-          dotnet pack src/Elyfe.Orleans.Marten.Reminders/Elyfe.Orleans.Marten.Reminders.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }}
+          dotnet pack src/Elyfe.Orleans.Marten.Persistence/Elyfe.Orleans.Marten.Persistence.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.semVer }}
+          dotnet pack src/Elyfe.Analyzers.Orleans.MartenSchema/Elyfe.Analyzers.Orleans.MartenSchema.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.semVer }}
+          dotnet pack src/Elyfe.Orleans.Marten.Reminders/Elyfe.Orleans.Marten.Reminders.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.semVer }}
       
       - name: Upload artifact
         uses: actions/upload-artifact@v7
