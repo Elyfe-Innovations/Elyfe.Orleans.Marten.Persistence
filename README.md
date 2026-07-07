@@ -369,7 +369,7 @@ siloBuilder.UseElyfeMartenReminderService(options =>
 });
 ```
 
-The provider stores reminders in `reminders.orleans_reminders`. The platform migrator owns production DDL and migrates existing Interflare reminder document rows in place via `042-elyfe-orleans-reminders-timescale.sql`.
+The provider stores reminders in `reminders.orleans_reminders`. The platform migrator owns production DDL and migrates existing Interflare reminder document rows in place via `043-elyfe-orleans-reminders-timescale.sql`.
 
 TimescaleDB is preferred, not required. When the extension is installed, the migration converts the reminder table to a hypertable partitioned by `start_at`; otherwise the same table and indexes run on plain PostgreSQL.
 
