@@ -4,15 +4,52 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+*"
   pull_request:
     branches:
       - main
+  release:
+    types:
+      - published
 
 jobs:
+  test:
+    name: Test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore Elyfe.Orleans.Marten.Persistence.slnx
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore Elyfe.Orleans.Marten.Persistence.slnx
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build Elyfe.Orleans.Marten.Persistence.slnx --logger trx --results-directory TestResults
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v2
+        if: always()
+        with:
+          name: .NET Test Results
+          path: TestResults/*.trx
+          reporter: dotnet-trx
+
   build:
     name: Build and Pack
+    if: github.event_name == 'pull_request' || (github.event_name == 'release' && github.event.action == 'published')
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       nuget_version: ${{ steps.gitversion.outputs.nuGetVersionV2 }}
@@ -23,13 +60,13 @@ jobs:
           fetch-depth: 0 # Required for GitVersion to work correctly
 
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v1.1.1
+        uses: gittools/actions/gitversion/setup@v4.7.0
         with:
           versionSpec: "5.x"
 
       - name: Determine Version
         id: gitversion
-        uses: gittools/actions/gitversion/execute@v1.1.1
+        uses: gittools/actions/gitversion/execute@v4.7.0
 
       - name: Setup .NET 9
         uses: actions/setup-dotnet@v5
@@ -44,16 +81,13 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore Elyfe.Orleans.Marten.Persistence.slnx
 
-      #      - name: Test
-      #        run: dotnet test --configuration Release --no-build Elyfe.Orleans.Marten.Persistence.slnx
-
       - name: Pack Projects
         run: |
           dotnet pack src/Elyfe.Orleans.Marten.Persistence/Elyfe.Orleans.Marten.Persistence.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }}
           dotnet pack src/Elyfe.Analyzers.Orleans.MartenSchema/Elyfe.Analyzers.Orleans.MartenSchema.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.nuGetVersionV2 }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nupkg
           path: ./nupkgs/*.nupkg
@@ -67,10 +101,10 @@ jobs:
     environment:
       name: nuget
       url: https://www.nuget.org/packages/Elyfe.Orleans.Marten.Persistence/${{ needs.build.outputs.nuget_version }}
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'release' && github.event.action == 'published'
     steps:
       - name: Download artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: nupkg
           path: ./nupkgs
