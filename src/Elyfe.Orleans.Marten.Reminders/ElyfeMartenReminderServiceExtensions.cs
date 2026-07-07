@@ -1,3 +1,4 @@
+using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Orleans;
@@ -24,8 +25,9 @@ public static class ElyfeMartenReminderServiceExtensions
             services.Configure(configure);
         }
 
-        services.AddSingleton<IReminderTable, ElyfeMartenReminderTable>();
         services.AddSingleton<IValidateOptions<ElyfeMartenReminderOptions>, ElyfeMartenReminderOptionsValidator>();
+        services.AddSingleton<IConfigureMarten, ElyfeMartenReminderMartenConfiguration>();
+        services.AddSingleton<IReminderTable, ElyfeMartenReminderTable>();
         services.AddReminders();
         return services;
     }

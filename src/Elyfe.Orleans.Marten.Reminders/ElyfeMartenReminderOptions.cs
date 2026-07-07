@@ -8,7 +8,7 @@ public sealed class ElyfeMartenReminderOptions
 
     public string SchemaName { get; set; } = "reminders";
 
-    public string TableName { get; set; } = "orleans_reminders";
+    public string DocumentAlias { get; set; } = "orleans_reminders";
 
     public bool AutoCreateSchema { get; set; }
 
@@ -17,6 +17,4 @@ public sealed class ElyfeMartenReminderOptions
     public TimeSpan TimescaleChunkInterval { get; set; } = TimeSpan.FromDays(7);
 
     public int CommandTimeoutSeconds { get; set; } = 30;
-
-    public int BulkBatchSize { get; set; } = 500;
 }

@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 using Elyfe.Orleans.Marten.Reminders;
+using JasperFx;
+using Marten;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -7,6 +9,7 @@ using Orleans;
 using Orleans.Configuration;
 using Orleans.Runtime;
 using Testcontainers.PostgreSql;
+using Weasel.Core;
 using Xunit;
 
 namespace Elyfe.Orleans.Marten.Reminders.Tests;
@@ -24,16 +27,20 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
         .Build();
 
     private ElyfeMartenReminderTable? _table;
+    private IDocumentStore? _documentStore;
 
     public async Task InitializeAsync()
     {
         await _postgreSqlContainer.StartAsync();
+        _documentStore = CreateDocumentStore();
+        await _documentStore.Storage.ApplyAllConfiguredChangesToDatabaseAsync(AutoCreate.CreateOrUpdate);
         _table = CreateTable(autoCreateSchema: true, preferTimescale: true);
         await _table.Init();
     }
 
     public async Task DisposeAsync()
     {
+        _documentStore?.Dispose();
         await _postgreSqlContainer.DisposeAsync();
     }
 
@@ -250,7 +257,7 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Init_DetectsTimescaleHypertableWhenExtensionIsInstalled()
+    public async Task Init_UsesMartenDocumentTableShape()
     {
         await using var connection = new NpgsqlConnection(_postgreSqlContainer.GetConnectionString());
         await connection.OpenAsync();
@@ -258,19 +265,20 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
         command.CommandText = """
             SELECT EXISTS (
                 SELECT 1
-                FROM timescaledb_information.hypertables
-                WHERE hypertable_schema = 'reminders'
-                  AND hypertable_name = 'orleans_reminders')
+                FROM information_schema.tables
+                WHERE table_schema = 'reminders'
+                  AND table_name = 'mt_doc_orleans_reminders')
             """;
 
-        var isHypertable = (bool)(await command.ExecuteScalarAsync() ?? false);
+        var tableExists = (bool)(await command.ExecuteScalarAsync() ?? false);
 
-        isHypertable.Should().BeTrue("auto-create should heavily use Timescale when the extension is installed");
+        tableExists.Should().BeTrue("reminder data should be managed by a Marten document table");
     }
 
     private ElyfeMartenReminderTable CreateTable(bool autoCreateSchema, bool preferTimescale, string serviceId = "test-service")
     {
         return new ElyfeMartenReminderTable(
+            DocumentStore,
             Options.Create(new ElyfeMartenReminderOptions
             {
                 ConnectionString = _postgreSqlContainer.GetConnectionString(),
@@ -284,6 +292,26 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
             }),
             NullLogger<ElyfeMartenReminderTable>.Instance);
     }
+
+    private IDocumentStore CreateDocumentStore()
+    {
+        return global::Marten.DocumentStore.For(options =>
+        {
+            options.Connection(_postgreSqlContainer.GetConnectionString());
+            options.UseSystemTextJsonForSerialization(EnumStorage.AsString);
+            options.AutoCreateSchemaObjects = AutoCreate.CreateOrUpdate;
+            options.Schema.For<ElyfeMartenReminderDocument>()
+                .DatabaseSchemaName("reminders")
+                .DocumentAlias("orleans_reminders")
+                .Identity(document => document.Id)
+                .Index(document => document.ServiceId)
+                .Index(document => document.GrainId)
+                .Index(document => document.GrainHash)
+                .Index(document => document.StartAt);
+        });
+    }
+
+    private IDocumentStore DocumentStore => _documentStore ?? throw new InvalidOperationException("Document store was not initialized.");
 
     private ElyfeMartenReminderTable Table => _table ?? throw new InvalidOperationException("Test table was not initialized.");
 }
