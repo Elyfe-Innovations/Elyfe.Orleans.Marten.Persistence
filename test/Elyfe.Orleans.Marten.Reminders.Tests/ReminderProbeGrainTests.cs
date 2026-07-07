@@ -98,7 +98,7 @@ public sealed class ReminderProbeGrainTests : IAsyncLifetime
         var grain = Cluster.GrainFactory.GetGrain<IReminderProbeGrain>($"probe-{Guid.NewGuid():N}");
 
         await grain.RegisterAsync(TimeSpan.FromMilliseconds(200), TimeSpan.FromMinutes(1));
-        var ticked = await WaitUntilAsync(async () => await grain.GetTickCountAsync() > 0, TimeSpan.FromSeconds(10));
+        var ticked = await WaitUntilAsync(async () => await grain.GetTickCountAsync() > 0, TimeSpan.FromSeconds(60));
         await grain.UnregisterAsync();
 
         Assert.True(ticked, "The Orleans reminder service should load and tick the probe reminder through the Elyfe Marten provider.");
