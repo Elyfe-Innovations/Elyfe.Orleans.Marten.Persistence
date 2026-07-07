@@ -21,7 +21,7 @@ public class MartenGrainStorageMigrationTests : IAsyncLifetime
 
     public MartenGrainStorageMigrationTests()
     {
-        _postgreSqlContainer = new PostgreSqlBuilder("timescaledb:latest-pg17")
+        _postgreSqlContainer = new PostgreSqlBuilder("timescale/timescaledb:latest-pg17")
             .WithDatabase("test_migration_db")
             .WithUsername("testuser")
             .WithPassword("testpass")

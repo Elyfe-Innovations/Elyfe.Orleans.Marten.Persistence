@@ -1,6 +1,6 @@
 # Elyfe.Orleans.Marten.Persistence
 
-Orleans grain storage implementation using Marten (PostgreSQL document store) with optional Redis read-through cache and write-behind overflow.
+Orleans grain storage implementation using Marten (PostgreSQL document store) with optional Redis read-through cache and write-behind overflow. The repository also contains `Elyfe.Orleans.Marten.Reminders`, an Orleans reminder table provider backed by PostgreSQL with TimescaleDB-aware schema support.
 
 ## Features
 
@@ -12,6 +12,7 @@ Orleans grain storage implementation using Marten (PostgreSQL document store) wi
 - **Marten tenancy per storage**: Configure different IDocumentStore instances per storage name using Marten's multi-tenancy features
 - **ETag-based concurrency**: Optimistic concurrency control with SHA-256 ETags
 - **Backward compatibility**: Automatic migration from old grain ID format
+- **Elyfe reminder storage**: Separate `Elyfe.Orleans.Marten.Reminders` package implementing Orleans `IReminderTable` with service-id isolation, ETag deletes, and Timescale-preferred migrations.
 
 ## Quick Start
 
@@ -355,6 +356,22 @@ Tests use Testcontainers (PostgreSQL + Redis) and verify:
 - Multi-tenancy with `UseTenantPerStorage`
 - Data isolation across different storage names
 - Correct tenant selection for reads and writes
+
+## Elyfe Orleans Marten Reminders
+
+Register the reminder provider in the silo:
+
+```csharp
+siloBuilder.UseElyfeMartenReminderService(options =>
+{
+    options.ConnectionString = connectionString;
+    options.PreferTimescale = true;
+});
+```
+
+The provider stores reminders in `reminders.orleans_reminders`. The platform migrator owns production DDL and migrates existing Interflare reminder document rows in place via `043-elyfe-orleans-reminders-timescale.sql`.
+
+TimescaleDB is preferred, not required. When the extension is installed, the migration converts the reminder table to a hypertable partitioned by `start_at`; otherwise the same table and indexes run on plain PostgreSQL.
 
 ## Migration Guide
 

@@ -1,8 +1,10 @@
 using AwesomeAssertions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
+using Elyfe.Orleans.Marten.Persistence.Options;
 using Marten;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Orleans;
 using Orleans.Configuration;
@@ -25,7 +27,7 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
 
     public MartenGrainStorageETagTests()
     {
-        _postgreSqlContainer = new PostgreSqlBuilder("timescaledb:latest-pg17")
+        _postgreSqlContainer = new PostgreSqlBuilder("timescale/timescaledb:latest-pg17")
             .WithDatabase("test_etag_db")
             .WithUsername("testuser")
             .WithPassword("testpass")
@@ -46,6 +48,8 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         // Create mock service provider (no cache)
         var serviceProvider = new Mock<IServiceProvider>();
         serviceProvider.Setup(sp => sp.GetService(typeof(IDocumentStore))).Returns(_documentStore);
+        serviceProvider.Setup(sp => sp.GetService(typeof(IOptions<MartenStorageOptions>)))
+            .Returns(OptionsHelper.Create(new MartenStorageOptions { CheckConcurrency = true }));
 
         _storage = new MartenGrainStorage("test", _documentStore, serviceProvider.Object, logger, clusterOptions, hostEnvironment.Object);
     }
@@ -186,8 +190,10 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
             await session.SaveChangesAsync();
         }
 
-        // Try to update with stale ETag
+        // Try to update with a stale ETag. The state may have been changed by another
+        // writer whose ETag differs from this caller's cached value.
         grainState.State.Name = "My Update";
+        grainState.ETag = "stale-etag";
         var call = async () => await _storage.WriteStateAsync("TestState", grainId, grainState);
 
         // Assert
