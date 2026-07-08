@@ -117,11 +117,24 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var cts = new CancellationTokenSource();
         var drainTask = drainer.StartAsync(cts.Token);
 
-        // Wait for drain to complete
-        await Task.Delay(TimeSpan.FromSeconds(5));
+        // Wait for drain to complete. Full solution test runs execute target frameworks concurrently,
+        // so fixed sleeps are too short under container/CPU contention.
+        var drained = await WaitUntilAsync(async () =>
+        {
+            await using var smsPollSession = _documentStore.QuerySession("sms");
+            var smsPollDocument = await smsPollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_message_101");
+
+            await using var eventsPollSession = _documentStore.QuerySession("events");
+            var eventsPollDocument = await eventsPollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_ticket_202");
+
+            return smsPollDocument?.Data.TextValue == "SMS Message" &&
+                   eventsPollDocument?.Data.TextValue == "Event Ticket";
+        }, TimeSpan.FromSeconds(30));
 
         cts.Cancel();
         await drainer.StopAsync(CancellationToken.None);
+
+        drained.Should().BeTrue("the write-behind drainer should eventually persist all dirty cache entries");
 
         // Assert - Verify SMS data is in SMS tenant
         await using var smsSession = _documentStore.QuerySession("sms");
@@ -169,7 +182,7 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var drainerLogger = new LoggerFactory().CreateLogger<CacheToMartenWriter>();
         var cacheLogger = new LoggerFactory().CreateLogger<RedisGrainStateCache>();
 
-        var cache = new RedisGrainStateCache(_redis, cacheLogger,martenOptions, "test-cluster");
+        var cache = new RedisGrainStateCache(_redis, cacheLogger, martenOptions, "test-cluster");
         var serviceProvider =
             new MockServiceProvider(_documentStore, _redis, clusterOptions, martenOptions, cache);
 
@@ -210,11 +223,24 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var ussdState = new GrainState<TestState>(new TestState { TextValue = "USSD Session", Value = 402 });
         await ussdStorage.WriteStateAsync("TestState", ussdGrainId, ussdState);
 
-        // Wait for drain
-        await Task.Delay(TimeSpan.FromSeconds(5));
+        // Wait for drain. Full solution test runs execute target frameworks concurrently,
+        // so fixed sleeps are too short under container/CPU contention.
+        var drained = await WaitUntilAsync(async () =>
+        {
+            await using var financePollSession = _documentStore.QuerySession("finance");
+            var financePollDocument = await financePollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_payment_301");
+
+            await using var ussdPollSession = _documentStore.QuerySession("ussd");
+            var ussdPollDocument = await ussdPollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_session_402");
+
+            return financePollDocument?.Data.TextValue == "Payment Record" &&
+                   ussdPollDocument?.Data.TextValue == "USSD Session";
+        }, TimeSpan.FromSeconds(30));
 
         cts.Cancel();
         await drainer.StopAsync(CancellationToken.None);
+
+        drained.Should().BeTrue("the write-behind drainer should eventually persist dirty cache entries for every storage tenant");
 
         // Assert - Verify data is persisted to correct tenants
         await using var financeSession = _documentStore.QuerySession("finance");
@@ -270,8 +296,19 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var writeState = new GrainState<TestState>(new TestState { TextValue = "Broadcast Message", Value = 555 });
         await storage.WriteStateAsync("TestState", grainId, writeState);
 
-        // Wait for drain
-        await Task.Delay(TimeSpan.FromSeconds(5));
+        // Wait for drain. Full solution test runs execute target frameworks concurrently,
+        // so fixed sleeps are too short under container/CPU contention.
+        var drained = await WaitUntilAsync(async () =>
+        {
+            await using var pollSession = _documentStore.QuerySession("sms");
+            var pollDocument = await pollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_broadcast_555");
+            return pollDocument?.Data.TextValue == "Broadcast Message";
+        }, TimeSpan.FromSeconds(30));
+
+        cts.Cancel();
+        await drainer.StopAsync(CancellationToken.None);
+
+        drained.Should().BeTrue("the write-behind drainer should persist the dirty cache entry before read-through verification");
 
         // Clear cache to force read from Marten
         await cache.RemoveAsync("sms", grainId);
@@ -279,9 +316,6 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         // Read state
         var readState = new GrainState<TestState>();
         await storage.ReadStateAsync("TestState", grainId, readState);
-
-        cts.Cancel();
-        await drainer.StopAsync(CancellationToken.None);
 
         // Assert
         readState.RecordExists.Should().BeTrue();
@@ -295,6 +329,22 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         public string ApplicationName { get; set; } = "Test";
         public string ContentRootPath { get; set; } = string.Empty;
         public IFileProvider ContentRootFileProvider { get; set; } = null!;
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+
+        return false;
     }
 
     private class MockServiceProvider : IServiceProvider
