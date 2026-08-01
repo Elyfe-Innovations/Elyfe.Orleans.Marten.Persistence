@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 using Elyfe.Orleans.Marten.Persistence.Options;
 using Marten;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -9,6 +10,7 @@ using Moq;
 using Orleans;
 using Orleans.Configuration;
 using Orleans.Runtime;
+using Orleans.Serialization;
 using Orleans.Storage;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -38,7 +40,12 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
     {
         await _postgreSqlContainer.StartAsync();
         
-        _documentStore = DocumentStore.For(_postgreSqlContainer.GetConnectionString());
+        _documentStore = DocumentStore.For(options =>
+        {
+            options.Connection(_postgreSqlContainer.GetConnectionString());
+            options.Schema.For<MartenGrainData<byte[]>>()
+                .DocumentAlias("opaque_grain_states");
+        });
 
         var logger = new NullLogger<MartenGrainStorage>();
         var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
@@ -50,6 +57,11 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         serviceProvider.Setup(sp => sp.GetService(typeof(IDocumentStore))).Returns(_documentStore);
         serviceProvider.Setup(sp => sp.GetService(typeof(IOptions<MartenStorageOptions>)))
             .Returns(OptionsHelper.Create(new MartenStorageOptions { CheckConcurrency = true }));
+        var serializer = new ServiceCollection()
+            .AddSerializer()
+            .BuildServiceProvider()
+            .GetRequiredService<Serializer>();
+        serviceProvider.Setup(sp => sp.GetService(typeof(Serializer))).Returns(serializer);
 
         _storage = new MartenGrainStorage("test", _documentStore, serviceProvider.Object, logger, clusterOptions, hostEnvironment.Object);
     }
@@ -106,6 +118,30 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         readGrainState.ETag.Should().Be(originalETag);
         readGrainState.State!.Name.Should().Be("Test");
         readGrainState.State.Value.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task WriteAndReadStateAsync_NonPublicState_ShouldUseOpaquePersistence()
+    {
+        ArgumentNullException.ThrowIfNull(_storage);
+        var grainId = GrainId.Parse("InternalTestState/internal-grain");
+        var grainState = new GrainState<InternalTestState>
+        {
+            State = new InternalTestState { Name = "Internal", Value = 73 }
+        };
+
+        await _storage.WriteStateAsync("InternalTestState", grainId, grainState);
+
+        var readGrainState = new GrainState<InternalTestState>
+        {
+            State = new InternalTestState()
+        };
+        await _storage.ReadStateAsync("InternalTestState", grainId, readGrainState);
+
+        readGrainState.RecordExists.Should().BeTrue();
+        readGrainState.ETag.Should().Be(grainState.ETag);
+        readGrainState.State.Name.Should().Be("Internal");
+        readGrainState.State.Value.Should().Be(73);
     }
 
     [Fact]
@@ -247,4 +283,14 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         readGrainState.ETag.Should().BeNull();
         readGrainState.State.Should().BeNull();
     }
+}
+
+[GenerateSerializer]
+internal sealed class InternalTestState
+{
+    [Id(0)]
+    public string Name { get; set; } = string.Empty;
+
+    [Id(1)]
+    public int Value { get; set; }
 }
