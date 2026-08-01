@@ -10,6 +10,7 @@ using Orleans;
 using Orleans.Configuration;
 using Orleans.Runtime;
 using Orleans.Storage;
+using Orleans.Serialization;
 using System.Diagnostics;
 
 namespace Elyfe.Orleans.Marten.Persistence.GrainPersistence;
@@ -25,6 +26,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     private readonly ILogger<MartenGrainStorage> _logger;
     private readonly IHostEnvironment _environment;
     private readonly MartenStorageOptions _martenOptions;
+    private readonly Serializer? _serializer;
     private readonly ActivitySource _activitySource = new("Elyfe.Orleans.Marten.Persistence");
 
     public MartenGrainStorage(string storageName,
@@ -41,6 +43,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         _clusterService = clusterOptions.Value.ServiceId;
         _cache = services.GetService<IGrainStateCache>();
         _martenOptions = services.GetService<IOptions<MartenStorageOptions>>()?.Value ?? new MartenStorageOptions();
+        _serializer = services.GetService<Serializer>();
         services.GetService<CacheToMartenWriter>()?.RegisterStorage(_storageName);
     }
 
@@ -53,6 +56,12 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             ? _documentStore.LightweightSession(_storageName)
             : _documentStore.LightweightSession();
         var id = GenerateId(grainId);
+        if (!typeof(T).IsVisible)
+        {
+            session.Delete<MartenGrainData<byte[]>>(id);
+            await session.SaveChangesAsync();
+            return;
+        }
         session.Delete<MartenGrainData<T>>(id);
         await session.SaveChangesAsync();
     }
@@ -87,6 +96,11 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 ? _documentStore.QuerySession(_storageName)
                 : _documentStore.QuerySession();
             var id = GenerateId(grainId);
+            if (!typeof(T).IsVisible)
+            {
+                await ReadOpaqueStateAsync(session, grainId, grainState, id);
+                return;
+            }
             var document = await session.LoadAsync<MartenGrainData<T>>(id);
 
             if (document != null)
@@ -158,6 +172,11 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         {
             if (_logger.IsEnabled(LogLevel.Trace))
                 _logger.LogTrace($"Writing state for grain {grainId} of type {grainType}.");
+            if (!typeof(T).IsVisible)
+            {
+                await WriteOpaqueStateAsync(grainId, grainState);
+                return;
+            }
 
             var id = GenerateId(grainId);
             var state = MartenGrainData<T>.Create(grainState.State, id);
@@ -250,6 +269,102 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         finally
         {
             activity?.Stop();
+        }
+    }
+
+    private async Task ReadOpaqueStateAsync<T>(
+        IQuerySession session,
+        GrainId grainId,
+        IGrainState<T> grainState,
+        string id)
+    {
+        var document = await session.LoadAsync<MartenGrainData<byte[]>>(id);
+        if (document is null)
+        {
+            var oldId = grainId.ToString();
+            document = await session.LoadAsync<MartenGrainData<byte[]>>(oldId);
+            if (document is null)
+            {
+                grainState.RecordExists = false;
+                grainState.ETag = null;
+                return;
+            }
+
+            var migrated = MartenGrainData<byte[]>.Create(document.Data, id);
+            await using var migrationSession = _martenOptions.UseTenantPerStorage
+                ? _documentStore.LightweightSession(_storageName)
+                : _documentStore.LightweightSession();
+            migrationSession.Store(migrated);
+            migrationSession.Delete<MartenGrainData<byte[]>>(oldId);
+            await migrationSession.SaveChangesAsync();
+            document = migrated;
+        }
+
+        var serializer = _serializer ??
+                         throw new InvalidOperationException(
+                             "Orleans serializer is required to persist non-public grain state types.");
+        grainState.State = serializer.Deserialize<T>(document.Data);
+        grainState.RecordExists = true;
+        grainState.ETag = document.Etag;
+
+        if (_cache != null && _martenOptions.WriteBehind.EnableReadThrough)
+        {
+            await _cache.WriteAsync(
+                _storageName,
+                grainId,
+                grainState.State,
+                grainState.ETag,
+                document.LastModified.ToUnixTimeMilliseconds());
+        }
+    }
+
+    private async Task WriteOpaqueStateAsync<T>(GrainId grainId, IGrainState<T> grainState)
+    {
+        if (grainState.State is null)
+        {
+            return;
+        }
+
+        var serializer = _serializer ??
+                         throw new InvalidOperationException(
+                             "Orleans serializer is required to persist non-public grain state types.");
+        var id = GenerateId(grainId);
+        var state = MartenGrainData<byte[]>.Create(serializer.SerializeToArray(grainState.State), id);
+
+        if (grainState.RecordExists && grainState.ETag is not null)
+        {
+            await using var readSession = _martenOptions.UseTenantPerStorage
+                ? _documentStore.QuerySession(_storageName)
+                : _documentStore.QuerySession();
+            var existingDocument = await readSession.LoadAsync<MartenGrainData<byte[]>>(id);
+            if (existingDocument is not null &&
+                _martenOptions.CheckConcurrency &&
+                grainState.ETag != existingDocument.Etag)
+            {
+                throw new InconsistentStateException(
+                    $"ETag mismatch for grain {grainId}. Expected: {grainState.ETag}, Actual: {existingDocument.Etag}");
+            }
+        }
+
+        await using var session = _martenOptions.UseTenantPerStorage
+            ? _documentStore.LightweightSession(_storageName)
+            : _documentStore.LightweightSession();
+        session.Store(state);
+        await session.SaveChangesAsync();
+
+        grainState.ETag = state.Etag;
+        grainState.RecordExists = true;
+
+        if (_cache != null &&
+            (_martenOptions.WriteBehind.EnableReadThrough || _martenOptions.WriteBehind.EnableWriteBehind))
+        {
+            await _cache.WriteAsync(
+                _storageName,
+                grainId,
+                grainState.State,
+                state.Etag,
+                state.LastModified.ToUnixTimeMilliseconds());
+            await _cache.ClearDirtyAsync(_storageName, grainId);
         }
     }
 
