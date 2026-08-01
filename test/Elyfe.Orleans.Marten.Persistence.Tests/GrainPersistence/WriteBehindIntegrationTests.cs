@@ -3,6 +3,7 @@ using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 using JasperFx;
 using Marten;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -10,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Orleans;
 using Orleans.Configuration;
 using Orleans.Runtime;
+using Orleans.Serialization;
 using StackExchange.Redis;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redis;
@@ -41,6 +43,8 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
             opts.Connection(_postgresContainer.GetConnectionString());
             opts.AutoCreateSchemaObjects = AutoCreate.All;
             opts.DatabaseSchemaName = "test";
+            opts.Schema.For<MartenGrainData<byte[]>>()
+                .DocumentAlias("opaque_grain_states");
         });
 
         // Setup Redis
@@ -114,6 +118,88 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         var isDirty = await db.SetContainsAsync(dirtySetKey, "test_grain_overflow");
 
         isDirty.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task WriteStateAsync_WithOverflowForNonPublicState_ShouldCacheAndDrainOpaqueState()
+    {
+        if (_documentStore == null || _redis == null)
+            throw new InvalidOperationException("Test containers not initialized");
+
+        var martenStorageOptions = OptionsHelper.Create(new MartenStorageOptions
+        {
+            WriteBehind = new WriteBehindOptions
+            {
+                Threshold = 0,
+                BatchSize = 10,
+                DrainIntervalSeconds = 1,
+                EnableWriteBehind = true,
+                EnableReadThrough = true
+            }
+        });
+        var clusterOptions = OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" });
+        var serviceProvider = new MockServiceProvider(
+            _documentStore,
+            _redis,
+            martenStorageOptions,
+            clusterOptions);
+        var storage = new MartenGrainStorage(
+            "TestStorage",
+            _documentStore,
+            serviceProvider,
+            new LoggerFactory().CreateLogger<MartenGrainStorage>(),
+            clusterOptions,
+            new MockHostEnvironment());
+        var grainId = GrainId.Parse("internal/grain/overflow");
+        var grainState = new GrainState<InternalTestState>(new InternalTestState
+        {
+            Name = "opaque-overflow",
+            Value = 91
+        });
+
+        await storage.WriteStateAsync("InternalTestState", grainId, grainState);
+
+        await using (var preDrainSession = _documentStore.QuerySession())
+        {
+            var preDrainDocument = await preDrainSession.LoadAsync<MartenGrainData<byte[]>>(
+                "test-cluster_internal_grain_overflow");
+            preDrainDocument.Should().BeNull("overflow writes should not synchronously reach Marten");
+        }
+
+        var cachedRead = new GrainState<InternalTestState>();
+        await storage.ReadStateAsync("InternalTestState", grainId, cachedRead);
+        cachedRead.State.Name.Should().Be("opaque-overflow");
+        cachedRead.State.Value.Should().Be(91);
+
+        var drainer = (CacheToMartenWriter)serviceProvider.GetService(typeof(CacheToMartenWriter))!;
+        drainer.RegisterStorage("TestStorage");
+        using var cts = new CancellationTokenSource();
+        await drainer.StartAsync(cts.Token);
+
+        MartenGrainData<byte[]>? document = null;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (DateTime.UtcNow < deadline && document is null)
+        {
+            await using var session = _documentStore.QuerySession();
+            document = await session.LoadAsync<MartenGrainData<byte[]>>(
+                "test-cluster_internal_grain_overflow");
+            if (document is null)
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+
+        cts.Cancel();
+        await drainer.StopAsync(CancellationToken.None);
+
+        document.Should().NotBeNull();
+        var persistedState = serviceProvider.Serializer.Deserialize<InternalTestState>(document!.Data);
+        persistedState.Name.Should().Be("opaque-overflow");
+        persistedState.Value.Should().Be(91);
+
+        var dirtySet = _redis.GetDatabase(martenStorageOptions.Value.WriteBehind.CacheDatabase);
+        var isDirty = await dirtySet.SetContainsAsync(
+            "mgs:test-cluster:TestStorage:dirty",
+            "internal_grain_overflow");
+        isDirty.Should().BeFalse();
     }
 
     [Fact]
@@ -252,6 +338,10 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         private readonly IOptions<ClusterOptions> _clusterOptions;
         private readonly RedisGrainStateCache? _cache;
         private readonly IOptions<MartenStorageOptions> _martenStorageOptions;
+        public Serializer Serializer { get; } = new ServiceCollection()
+            .AddSerializer()
+            .BuildServiceProvider()
+            .GetRequiredService<Serializer>();
 
         public MockServiceProvider(
             IDocumentStore documentStore,
@@ -286,6 +376,8 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
                 return _cache;
             if (serviceType == typeof(IOptions<MartenStorageOptions>))
                 return _martenStorageOptions;
+            if (serviceType == typeof(Serializer))
+                return Serializer;
             if (serviceType == typeof(CacheToMartenWriter))
                 return new CacheToMartenWriter(_cache!, _documentStore,
                     new LoggerFactory().CreateLogger<CacheToMartenWriter>(),
