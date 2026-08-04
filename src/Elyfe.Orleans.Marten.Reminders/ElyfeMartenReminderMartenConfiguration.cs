@@ -13,6 +13,11 @@ internal sealed class ElyfeMartenReminderMartenConfiguration(IOptions<ElyfeMarte
             .DatabaseSchemaName(reminderOptions.SchemaName)
             .DocumentAlias(reminderOptions.DocumentAlias)
             .Identity(document => document.Id)
+            .Metadata(config =>
+            {
+                config.CreatedAt.Enabled = true;
+                config.Headers.Enabled = true;
+            })
             .Index(document => document.ServiceId)
             .Index(document => document.GrainId)
             .Index(document => document.GrainHash)
