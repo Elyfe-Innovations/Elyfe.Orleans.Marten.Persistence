@@ -13,6 +13,8 @@ using Orleans.Storage;
 using Orleans.Serialization;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using Orleans.Serialization.Serializers;
 
 namespace Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 
@@ -30,6 +32,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     private readonly IHostEnvironment _environment;
     private readonly MartenStorageOptions _martenOptions;
     private readonly Serializer? _serializer;
+    private readonly IActivatorProvider? _activatorProvider;
     private readonly ActivitySource _activitySource = new("Elyfe.Orleans.Marten.Persistence");
 
     public MartenGrainStorage(string storageName,
@@ -47,6 +50,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         _cache = services.GetService<IGrainStateCache>();
         _martenOptions = services.GetService<IOptions<MartenStorageOptions>>()?.Value ?? new MartenStorageOptions();
         _serializer = services.GetService<Serializer>();
+        _activatorProvider = services.GetService<IActivatorProvider>();
         services.GetService<CacheToMartenWriter>()?.RegisterStorage(_storageName);
     }
 
@@ -55,20 +59,26 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         using var activity = CreateLinkedDbActivity($"{_storageName}.ClearStateAsync", grainType);
         _logger.LogTrace($"Clearing state for grain {grainId} of type {grainType}.");
 
+        var id = GenerateId(grainId);
+
+        // Evict before deleting: a read-through read would otherwise resurrect the document, and
+        // a write-behind drain cycle landing between the delete and the eviction would re-store it.
+        // The drainer clears the dirty marker itself once the cached value is gone.
+        if (_cache != null)
+        {
+            await _cache.RemoveAsync(_storageName, grainId);
+            await _cache.ClearDirtyAsync(_storageName, grainId);
+        }
+
         await using var session = _martenOptions.UseTenantPerStorage
             ? _documentStore.LightweightSession(_storageName)
             : _documentStore.LightweightSession();
-        var id = GenerateId(grainId);
         if (!typeof(T).IsVisible)
             session.Delete<MartenGrainData<byte[]>>(id);
         else
             session.Delete<MartenGrainData<T>>(id);
 
         await session.SaveChangesAsync();
-
-        // Evict the cache entry, otherwise a read-through read resurrects the deleted document.
-        if (_cache != null)
-            await _cache.RemoveAsync(_storageName, grainId);
 
         // Orleans storage contract: after a clear the grain observes a fresh, empty state.
         grainState.State = CreateDefaultState<T>();
@@ -93,11 +103,12 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 return;
             }
 
-            // Read-through cache: check cache first if enabled
+            // Read-through cache: check cache first if enabled. Marten stays authoritative, so a
+            // cache outage degrades to a slower read instead of failing the activation.
             if (_cache != null && _martenOptions.WriteBehind.EnableReadThrough)
             {
                 _logger.LogTrace("Checking cache for grain {GrainId} in storage {StorageName}", grainId, _storageName);
-                var cached = await _cache.ReadAsync<T>(_storageName, grainId);
+                var cached = await TryReadCacheAsync<T>(grainId);
                 if (cached != null)
                 {
                     grainState.State = cached.Data;
@@ -123,10 +134,10 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 grainState.RecordExists = true;
                 grainState.ETag = document.Etag; // Generate the ETag from the state.
 
-                // Warm cache after Marten read
+                // Warm cache after Marten read; failures must not discard an authoritative read.
                 if (_cache != null && _martenOptions.WriteBehind.EnableReadThrough)
                 {
-                    await _cache.WriteAsync(_storageName, grainId, document.Data, grainState.ETag,
+                    await TryWarmCacheAsync(grainId, document.Data, grainState.ETag,
                         document.LastModified.ToUnixTimeMilliseconds());
                 }
             }
@@ -322,7 +333,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         var serializer = GetRequiredSerializer();
         if (_cache != null && _martenOptions.WriteBehind.EnableReadThrough)
         {
-            var cached = await _cache.ReadAsync<byte[]>(_storageName, grainId);
+            var cached = await TryReadCacheAsync<byte[]>(grainId);
             if (cached is not null)
             {
                 grainState.State = serializer.Deserialize<T>(cached.Data);
@@ -361,8 +372,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
         if (_cache != null && _martenOptions.WriteBehind.EnableReadThrough)
         {
-            await _cache.WriteAsync(
-                _storageName,
+            await TryWarmCacheAsync(
                 grainId,
                 document.Data,
                 grainState.ETag,
@@ -419,15 +429,58 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             "Orleans serializer is required to persist non-public grain state types.");
 
     /// <summary>
-    /// Produces the empty state instance Orleans expects when no record exists.
-    /// Falls back to <c>default</c> for state types without a parameterless constructor.
+    /// Produces the empty state instance Orleans expects when no record exists. Delegates to the
+    /// runtime's own activator so the grain observes exactly what <c>StateStorageBridge</c> would
+    /// have created; the fallback mirrors it for state types with no public parameterless
+    /// constructor. Never returns null for a reference type.
     /// </summary>
-    private static T CreateDefaultState<T>() =>
-        DefaultConstructible.GetOrAdd(
-            typeof(T),
+    private T CreateDefaultState<T>()
+    {
+        if (_activatorProvider is not null)
+            return _activatorProvider.GetActivator<T>().Create();
+
+        var type = typeof(T);
+        return DefaultConstructible.GetOrAdd(
+            type,
             static t => t.IsValueType || t.GetConstructor(Type.EmptyTypes) is not null)
             ? Activator.CreateInstance<T>()
-            : default!;
+            : (T)RuntimeHelpers.GetUninitializedObject(type);
+    }
+
+    /// <summary>
+    /// Cache reads are an optimisation over the authoritative Marten document: an unavailable
+    /// cache degrades to a slower read rather than failing the grain call.
+    /// </summary>
+    private async Task<CachedGrainState<T>?> TryReadCacheAsync<T>(GrainId grainId)
+    {
+        try
+        {
+            return await _cache!.ReadAsync<T>(_storageName, grainId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Cache read failed for grain {GrainId} in storage {StorageName}; falling back to Marten",
+                grainId, _storageName);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Best-effort cache warm-up after an authoritative read. A failure only costs the next read
+    /// another Marten round trip, so it must never discard state we already loaded.
+    /// </summary>
+    private async Task TryWarmCacheAsync<T>(GrainId grainId, T data, string? etag, long lastModified)
+    {
+        try
+        {
+            await _cache!.WriteAsync(_storageName, grainId, data, etag!, lastModified);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Cache warm-up failed for grain {GrainId} in storage {StorageName}",
+                grainId, _storageName);
+        }
+    }
 
     public void Participate(ISiloLifecycle lifecycle)
     {
