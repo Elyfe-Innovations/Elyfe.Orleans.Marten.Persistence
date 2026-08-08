@@ -11,6 +11,7 @@ using Orleans.Configuration;
 using Orleans.Runtime;
 using Orleans.Storage;
 using Orleans.Serialization;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 
 namespace Elyfe.Orleans.Marten.Persistence.GrainPersistence;
@@ -18,6 +19,8 @@ namespace Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLifecycle>
 {
     private readonly string _clusterService;
+    private static readonly ConcurrentDictionary<Type, bool> DefaultConstructible = new();
+
 
     // private readonly IDocumentStore _documentStore = services.GetKeyedService<IDocumentStore>(storageName) ?? documentStore;
     private readonly IGrainStateCache? _cache;
@@ -57,13 +60,20 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             : _documentStore.LightweightSession();
         var id = GenerateId(grainId);
         if (!typeof(T).IsVisible)
-        {
             session.Delete<MartenGrainData<byte[]>>(id);
-            await session.SaveChangesAsync();
-            return;
-        }
-        session.Delete<MartenGrainData<T>>(id);
+        else
+            session.Delete<MartenGrainData<T>>(id);
+
         await session.SaveChangesAsync();
+
+        // Evict the cache entry, otherwise a read-through read resurrects the deleted document.
+        if (_cache != null)
+            await _cache.RemoveAsync(_storageName, grainId);
+
+        // Orleans storage contract: after a clear the grain observes a fresh, empty state.
+        grainState.State = CreateDefaultState<T>();
+        grainState.RecordExists = false;
+        grainState.ETag = null;
     }
 
     public async Task ReadStateAsync<T>(string stateName, GrainId grainId, IGrainState<T> grainState)
@@ -132,9 +142,9 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 }
                 else
                 {
-#pragma warning disable CS8601 // Possible null reference assignment.
-                    grainState.State = default;
-#pragma warning restore CS8601 // Possible null reference assignment.
+                    // Orleans storage contract: State must be a usable instance even when no
+                    // record exists, otherwise every grain has to null-guard on first activation.
+                    grainState.State = CreateDefaultState<T>();
                     grainState.RecordExists = false;
                     grainState.ETag = null;
                 }
@@ -145,6 +155,8 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             _logger.LogCritical(ex, "An error occurred executing {Method}- Error {Message}", nameof(ReadStateAsync),
                 ex.Message);
             activity?.AddException(ex);
+            // Never swallow: reporting "no state" on a failed read makes the grain overwrite live data.
+            throw;
         }
         finally
         {
@@ -327,6 +339,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             document = await session.LoadAsync<MartenGrainData<byte[]>>(oldId);
             if (document is null)
             {
+                grainState.State = CreateDefaultState<T>();
                 grainState.RecordExists = false;
                 grainState.ETag = null;
                 return;
@@ -404,6 +417,17 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     private Serializer GetRequiredSerializer() =>
         _serializer ?? throw new InvalidOperationException(
             "Orleans serializer is required to persist non-public grain state types.");
+
+    /// <summary>
+    /// Produces the empty state instance Orleans expects when no record exists.
+    /// Falls back to <c>default</c> for state types without a parameterless constructor.
+    /// </summary>
+    private static T CreateDefaultState<T>() =>
+        DefaultConstructible.GetOrAdd(
+            typeof(T),
+            static t => t.IsValueType || t.GetConstructor(Type.EmptyTypes) is not null)
+            ? Activator.CreateInstance<T>()
+            : default!;
 
     public void Participate(ISiloLifecycle lifecycle)
     {
