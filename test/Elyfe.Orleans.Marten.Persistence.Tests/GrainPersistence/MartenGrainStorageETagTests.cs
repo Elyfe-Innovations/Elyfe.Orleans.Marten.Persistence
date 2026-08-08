@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 using Elyfe.Orleans.Marten.Persistence.Options;
 using Marten;
@@ -11,6 +12,7 @@ using Orleans;
 using Orleans.Configuration;
 using Orleans.Runtime;
 using Orleans.Serialization;
+using Orleans.Serialization.Serializers;
 using Orleans.Storage;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -290,6 +292,119 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         readGrainState.ETag.Should().BeNull();
         readGrainState.State.Should().NotBeNull();
     }
+
+    [Fact]
+    public async Task ReadStateAsync_StateWithoutParameterlessConstructor_StillReturnsInstance()
+    {
+        ArgumentNullException.ThrowIfNull(_storage);
+        var grainId = GrainId.Parse("ConstructedState/test-grain-8");
+
+        // Fallback path: no IActivatorProvider registered.
+        var fallbackState = new GrainState<ConstructedTestState>();
+        await _storage.ReadStateAsync("ConstructedState", grainId, fallbackState);
+
+        // Production path: delegates to the same activator StateStorageBridge uses.
+        var activatedState = new GrainState<ConstructedTestState>();
+        await CreateStorage(cache: null, withActivatorProvider: true)
+            .ReadStateAsync("ConstructedState", grainId, activatedState);
+
+        fallbackState.RecordExists.Should().BeFalse();
+        fallbackState.State.Should()
+            .NotBeNull("because a state type without a public parameterless constructor must not degrade to null");
+        activatedState.State.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ReadStateAsync_WhenCacheIsUnavailable_StillReturnsMartenState()
+    {
+        ArgumentNullException.ThrowIfNull(_documentStore);
+        ArgumentNullException.ThrowIfNull(_storage);
+
+        var grainId = GrainId.Parse("TestState/test-grain-9");
+        var written = new GrainState<TestState>
+        {
+            State = new TestState { Name = "Durable", Value = 7 }
+        };
+        await _storage.WriteStateAsync("TestState", grainId, written);
+
+        var faultyCacheStorage = CreateStorage(new ThrowingGrainStateCache());
+        var read = new GrainState<TestState>();
+
+        await faultyCacheStorage.ReadStateAsync("TestState", grainId, read);
+
+        read.RecordExists.Should().BeTrue("because Marten is authoritative and the cache is only an optimisation");
+        read.State!.Name.Should().Be("Durable");
+        read.State.Value.Should().Be(7);
+    }
+
+    private MartenGrainStorage CreateStorage(IGrainStateCache? cache, bool withActivatorProvider = false)
+    {
+        var serviceProvider = new Mock<IServiceProvider>();
+        serviceProvider.Setup(sp => sp.GetService(typeof(IDocumentStore))).Returns(_documentStore);
+        serviceProvider.Setup(sp => sp.GetService(typeof(IOptions<MartenStorageOptions>)))
+            .Returns(OptionsHelper.Create(new MartenStorageOptions
+            {
+                CheckConcurrency = true,
+                WriteBehind = new WriteBehindOptions { EnableReadThrough = true }
+            }));
+        serviceProvider.Setup(sp => sp.GetService(typeof(IGrainStateCache))).Returns(cache);
+
+        if (withActivatorProvider)
+        {
+            var orleansServices = new ServiceCollection().AddSerializer().BuildServiceProvider();
+            serviceProvider.Setup(sp => sp.GetService(typeof(IActivatorProvider)))
+                .Returns(orleansServices.GetRequiredService<IActivatorProvider>());
+        }
+
+        var hostEnvironment = new Mock<IHostEnvironment>();
+        hostEnvironment.Setup(h => h.EnvironmentName).Returns("Development");
+
+        return new MartenGrainStorage(
+            "test",
+            _documentStore!,
+            serviceProvider.Object,
+            new NullLogger<MartenGrainStorage>(),
+            OptionsHelper.Create(new ClusterOptions { ServiceId = "test-cluster" }),
+            hostEnvironment.Object);
+    }
+}
+
+public sealed class ConstructedTestState(string name)
+{
+    public string Name { get; set; } = name;
+}
+
+/// <summary>
+///     Cache that is unavailable for both reads and writes.
+/// </summary>
+internal sealed class ThrowingGrainStateCache : IGrainStateCache
+{
+    public Task<CachedGrainState<T>?> ReadAsync<T>(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default) => throw new InvalidOperationException("cache down");
+
+    public Task WriteAsync<T>(string storageName, GrainId grainId, T state, string etag, long lastModified,
+        CancellationToken cancellationToken = default) => throw new InvalidOperationException("cache down");
+
+    public Task RemoveAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
+    public Task MarkDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
+    public Task ClearDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
+    public Task<IReadOnlyList<string>> GetDirtyKeysAsync(string storageName, int batchSize,
+        CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
+
+    public Task<long> IncrementWriteCounterAsync(string storageName, CancellationToken cancellationToken = default) =>
+        Task.FromResult(0L);
+
+    public Task<bool> TryAcquireDrainLockAsync(string storageName, TimeSpan lockTtl,
+        CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+    public Task ReleaseDrainLockAsync(string storageName, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
 }
 
 [GenerateSerializer]
