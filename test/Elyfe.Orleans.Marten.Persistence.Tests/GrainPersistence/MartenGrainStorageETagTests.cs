@@ -73,7 +73,7 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ReadStateAsync_NewGrain_ShouldHaveNullETag()
+    public async Task ReadStateAsync_NewGrain_ShouldHaveNullETagAndEmptyState()
     {
         // Arrange
         ArgumentNullException.ThrowIfNull(_storage);
@@ -86,7 +86,8 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         // Assert
         grainState.RecordExists.Should().BeFalse();
         grainState.ETag.Should().BeNull();
-        grainState.State.Should().BeNull();
+        grainState.State.Should().NotBeNull("because Orleans grains must observe an empty state, not null");
+        grainState.State.Name.Should().BeEmpty();
     }
 
     [Fact]
@@ -273,6 +274,12 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         await _storage.WriteStateAsync("TestState", grainId, grainState);
         await _storage.ClearStateAsync("TestState", grainId, grainState);
 
+        // Assert - the cleared grain state is reset in place
+        grainState.RecordExists.Should().BeFalse();
+        grainState.ETag.Should().BeNull();
+        grainState.State.Should().NotBeNull();
+        grainState.State.Name.Should().BeEmpty();
+
         // Verify deletion
         var readGrainState = new GrainState<TestState>();
         ArgumentNullException.ThrowIfNull(_storage);
@@ -281,7 +288,7 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         // Assert
         readGrainState.RecordExists.Should().BeFalse();
         readGrainState.ETag.Should().BeNull();
-        readGrainState.State.Should().BeNull();
+        readGrainState.State.Should().NotBeNull();
     }
 }
 
