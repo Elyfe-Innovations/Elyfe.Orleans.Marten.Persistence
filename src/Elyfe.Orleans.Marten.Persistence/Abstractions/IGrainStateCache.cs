@@ -34,6 +34,29 @@ public interface IGrainStateCache
     Task ClearDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Returns whether a write-behind write is currently pending for the grain.
+    /// </summary>
+    /// <remarks>
+    /// Implementations MUST propagate failures rather than returning a value: callers use this to decide
+    /// between falling back to Marten (which is only safe when nothing newer is pending in the cache) and
+    /// refusing to serve possibly stale state, so an error is materially different from a false answer.
+    /// </remarks>
+    Task<bool> IsDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Acquires a short-lived, per-grain mutex that serializes write-behind drains with clears of the
+    /// same grain. Both sides must call it, which is what makes a clear immune to an in-flight drain
+    /// resurrecting the cleared state. Implementations MUST propagate failures.
+    /// </summary>
+    Task<bool> TryAcquireGrainLockAsync(string storageName, GrainId grainId, TimeSpan ttl,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Releases the per-grain mutex acquired with <see cref="TryAcquireGrainLockAsync"/>.
+    /// </summary>
+    Task ReleaseGrainLockAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets a batch of dirty grain keys for draining.
     /// </summary>
     Task<IReadOnlyList<string>> GetDirtyKeysAsync(string storageName, int batchSize, CancellationToken cancellationToken = default);

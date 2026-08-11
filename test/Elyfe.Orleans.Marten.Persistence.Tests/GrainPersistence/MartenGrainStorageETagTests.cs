@@ -337,6 +337,108 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         read.State.Value.Should().Be(7);
     }
 
+    [Fact]
+    public async Task ReadStateAsync_WhenCacheFailsAndGrainHasPendingWrite_ThrowsInsteadOfStaleMarten()
+    {
+        ArgumentNullException.ThrowIfNull(_documentStore);
+        ArgumentNullException.ThrowIfNull(_storage);
+
+        var grainId = GrainId.Parse("TestState/test-grain-10");
+        var written = new GrainState<TestState>
+        {
+            State = new TestState { Name = "Durable", Value = 7 }
+        };
+        await _storage.WriteStateAsync("TestState", grainId, written);
+
+        // Marten holds an older value and the grain has a pending write-behind write we can no
+        // longer read: serving the Marten document would let the grain clobber a newer accepted write.
+        var faultyCacheStorage = CreateStorage(new DirtyThrowingGrainStateCache());
+        var read = new GrainState<TestState>();
+
+        var act = async () => await faultyCacheStorage.ReadStateAsync("TestState", grainId, read);
+
+        await act.Should().ThrowAsync<OrleansException>();
+    }
+
+    [Fact]
+    public async Task ReadStateAsync_WhenCacheFailsAndDirtyStateCannotBeDetermined_Throws()
+    {
+        ArgumentNullException.ThrowIfNull(_documentStore);
+        ArgumentNullException.ThrowIfNull(_storage);
+
+        var grainId = GrainId.Parse("TestState/test-grain-11");
+        var written = new GrainState<TestState>
+        {
+            State = new TestState { Name = "Durable", Value = 7 }
+        };
+        await _storage.WriteStateAsync("TestState", grainId, written);
+
+        var faultyCacheStorage = CreateStorage(new UnknownThrowingGrainStateCache());
+        var read = new GrainState<TestState>();
+
+        var act = async () => await faultyCacheStorage.ReadStateAsync("TestState", grainId, read);
+
+        await act.Should().ThrowAsync<OrleansException>();
+    }
+
+    [Fact]
+    public async Task ClearStateAsync_WhenCacheEvictionFails_AbortsBeforeDeletingMartenState()
+    {
+        ArgumentNullException.ThrowIfNull(_documentStore);
+        ArgumentNullException.ThrowIfNull(_storage);
+
+        var grainId = GrainId.Parse("TestState/test-grain-12");
+        var written = new GrainState<TestState>
+        {
+            State = new TestState { Name = "Durable", Value = 7 }
+        };
+        await _storage.WriteStateAsync("TestState", grainId, written);
+
+        var failingEvictCacheStorage = CreateStorage(new EvictFailingGrainStateCache());
+        var clear = new GrainState<TestState> { State = new TestState() };
+
+        var act = async () => await failingEvictCacheStorage.ClearStateAsync("TestState", grainId, clear);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        // The Marten document must survive: clearing it while the cache still holds the value would
+        // let a read-through resurrect the "cleared" state.
+        var read = new GrainState<TestState>();
+        await _storage.ReadStateAsync("TestState", grainId, read);
+        read.RecordExists.Should().BeTrue("because the cache eviction failed and the clear aborted");
+        read.State!.Value.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task ClearStateAsync_WhenDrainHoldsGrainLock_AbortsWithoutTouchingCacheOrMarten()
+    {
+        ArgumentNullException.ThrowIfNull(_documentStore);
+        ArgumentNullException.ThrowIfNull(_storage);
+
+        var grainId = GrainId.Parse("TestState/test-grain-13");
+        var written = new GrainState<TestState>
+        {
+            State = new TestState { Name = "Durable", Value = 7 }
+        };
+        await _storage.WriteStateAsync("TestState", grainId, written);
+
+        // The write-behind drain holds the per-grain lock (as it does across read-store-writeback).
+        // The clear must not evict or delete underneath it, or the drain would resurrect the state.
+        var cache = new LockBusyGrainStateCache();
+        var lockBusyStorage = CreateStorage(cache);
+        var clear = new GrainState<TestState> { State = new TestState() };
+
+        var act = async () => await lockBusyStorage.ClearStateAsync("TestState", grainId, clear);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        cache.EvictionAttempts.Should().Be(0, "the clear must not touch the cache while a drain holds the grain lock");
+
+        var read = new GrainState<TestState>();
+        await _storage.ReadStateAsync("TestState", grainId, read);
+        read.RecordExists.Should().BeTrue("because the clear aborted before deleting the Marten document");
+        read.State!.Value.Should().Be(7);
+    }
+
     private MartenGrainStorage CreateStorage(IGrainStateCache? cache, bool withActivatorProvider = false)
     {
         var serviceProvider = new Mock<IServiceProvider>();
@@ -377,7 +479,7 @@ public sealed class ConstructedTestState(string name)
 /// <summary>
 ///     Cache that is unavailable for both reads and writes.
 /// </summary>
-internal sealed class ThrowingGrainStateCache : IGrainStateCache
+internal class ThrowingGrainStateCache : IGrainStateCache
 {
     public Task<CachedGrainState<T>?> ReadAsync<T>(string storageName, GrainId grainId,
         CancellationToken cancellationToken = default) => throw new InvalidOperationException("cache down");
@@ -385,14 +487,23 @@ internal sealed class ThrowingGrainStateCache : IGrainStateCache
     public Task WriteAsync<T>(string storageName, GrainId grainId, T state, string etag, long lastModified,
         CancellationToken cancellationToken = default) => throw new InvalidOperationException("cache down");
 
-    public Task RemoveAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
+    public virtual Task RemoveAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
-    public Task MarkDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
+    public virtual Task MarkDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
-    public Task ClearDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
+    public virtual Task ClearDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
+
+    public virtual Task<bool> IsDirtyAsync(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+    public virtual Task<bool> TryAcquireGrainLockAsync(string storageName, GrainId grainId, TimeSpan ttl,
+        CancellationToken cancellationToken = default) => Task.FromResult(true);
+
+    public virtual Task ReleaseGrainLockAsync(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<IReadOnlyList<string>> GetDirtyKeysAsync(string storageName, int batchSize,
         CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
@@ -405,6 +516,52 @@ internal sealed class ThrowingGrainStateCache : IGrainStateCache
 
     public Task ReleaseDrainLockAsync(string storageName, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
+}
+
+/// <summary>
+///     Cache whose reads fail while the grain reports a pending write-behind write.
+/// </summary>
+internal sealed class DirtyThrowingGrainStateCache : ThrowingGrainStateCache
+{
+    public override Task<bool> IsDirtyAsync(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default) => Task.FromResult(true);
+}
+
+/// <summary>
+///     Cache whose reads fail and whose dirty marker cannot be checked either.
+/// </summary>
+internal sealed class UnknownThrowingGrainStateCache : ThrowingGrainStateCache
+{
+    public override Task<bool> IsDirtyAsync(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default) => throw new InvalidOperationException("dirty check down");
+}
+
+/// <summary>
+///     Cache whose eviction fails, as when Redis is unreachable during a clear.
+/// </summary>
+internal sealed class EvictFailingGrainStateCache : ThrowingGrainStateCache
+{
+    public override Task RemoveAsync(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default) => throw new InvalidOperationException("eviction down");
+}
+
+/// <summary>
+///     Cache whose per-grain lock is held by an in-flight drain, and which records every eviction
+///     attempt so the test can prove the clear never touched the cache or Marten.
+/// </summary>
+internal sealed class LockBusyGrainStateCache : ThrowingGrainStateCache
+{
+    public int EvictionAttempts { get; private set; }
+
+    public override Task<bool> TryAcquireGrainLockAsync(string storageName, GrainId grainId, TimeSpan ttl,
+        CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+    public override Task RemoveAsync(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default)
+    {
+        EvictionAttempts++;
+        return Task.CompletedTask;
+    }
 }
 
 [GenerateSerializer]

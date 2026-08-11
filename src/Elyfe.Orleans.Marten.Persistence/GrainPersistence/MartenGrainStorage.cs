@@ -51,6 +51,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         _martenOptions = services.GetService<IOptions<MartenStorageOptions>>()?.Value ?? new MartenStorageOptions();
         _serializer = services.GetService<Serializer>();
         _activatorProvider = services.GetService<IActivatorProvider>();
+        services.GetService<CacheToMartenWriter>()?.RegisterStorage(_storageName);
     }
 
     public async Task ClearStateAsync<T>(string grainType, GrainId grainId, IGrainState<T> grainState)
@@ -60,13 +61,30 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
         var id = GenerateId(grainId);
 
-        // Evict before deleting: a read-through read would otherwise resurrect the document, and
-        // a write-behind drain cycle landing between the delete and the eviction would re-store it.
-        // The drainer clears the dirty marker itself once the cached value is gone.
+        // Serialize with an in-flight write-behind drain of this grain. Removing the cache value and
+        // deleting the Marten document while a drain holds its stale copy in memory is exactly the
+        // resurrection window, so the clear must hold the same per-grain lock the drain holds.
         if (_cache != null)
         {
-            await _cache.RemoveAsync(_storageName, grainId);
-            await _cache.ClearDirtyAsync(_storageName, grainId);
+            var lockTtl = TimeSpan.FromSeconds(_martenOptions.WriteBehind.DrainLockTtlSeconds);
+            if (!await TryAcquireGrainLockWithBoundedRetryAsync(_storageName, grainId, lockTtl))
+            {
+                throw new InvalidOperationException(
+                    $"Could not acquire the write-behind drain lock for grain {grainId} in storage {_storageName}; the clear was aborted rather than racing an in-flight drain.");
+            }
+
+            try
+            {
+                // Evict before deleting: a read-through read would otherwise resurrect the document, and
+                // a write-behind drain cycle landing between the delete and the eviction would re-store it.
+                // The drainer clears the dirty marker itself once the cached value is gone.
+                await _cache.RemoveAsync(_storageName, grainId);
+                await _cache.ClearDirtyAsync(_storageName, grainId);
+            }
+            finally
+            {
+                await _cache.ReleaseGrainLockAsync(_storageName, grainId);
+            }
         }
 
         await using var session = _martenOptions.UseTenantPerStorage
@@ -447,8 +465,10 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     }
 
     /// <summary>
-    /// Cache reads are an optimisation over the authoritative Marten document: an unavailable
-    /// cache degrades to a slower read rather than failing the grain call.
+    /// Cache reads are an optimisation over the authoritative Marten document, but only when the grain
+    /// has nothing newer pending in write-behind. A read failure for a grain that MAY have a pending
+    /// write must not fall back to Marten: the cache can hold a newer state than the database, and
+    /// serving the older document would let the grain clobber an already-accepted write.
     /// </summary>
     private async Task<CachedGrainState<T>?> TryReadCacheAsync<T>(GrainId grainId)
     {
@@ -458,10 +478,50 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Cache read failed for grain {GrainId} in storage {StorageName}; falling back to Marten",
-                grainId, _storageName);
-            return null;
+            try
+            {
+                if (!await _cache!.IsDirtyAsync(_storageName, grainId))
+                {
+                    _logger.LogWarning(ex,
+                        "Cache read failed for clean grain {GrainId} in storage {StorageName}; falling back to Marten",
+                        grainId, _storageName);
+                    return null;
+                }
+            }
+            catch (Exception dirtyCheckEx) when (dirtyCheckEx != ex)
+            {
+                throw new OrleansException(
+                    $"Cache unavailable for grain {grainId} in storage {_storageName} and pending write-behind state cannot be determined; refusing to serve possibly stale Marten state.",
+                    dirtyCheckEx);
+            }
+
+            throw new OrleansException(
+                $"Cache read failed for grain {grainId} in storage {_storageName} with a pending write-behind write; refusing to serve stale Marten state.",
+                ex);
         }
+    }
+
+    /// <summary>
+    /// Acquires the per-grain write-behind lock with a short bounded wait. The drain holds the lock
+    /// only for the duration of one read-store-writeback, so a brief poll almost always succeeds; a
+    /// drain that crashed leaves the TTL to expire. Refusing to proceed without the lock is deliberate:
+    /// evicting while a drain holds the value is exactly the resurrection race.
+    /// </summary>
+    private async Task<bool> TryAcquireGrainLockWithBoundedRetryAsync(
+        string storageName, GrainId grainId, TimeSpan ttl)
+    {
+        const int attempts = 5;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            if (await _cache!.TryAcquireGrainLockAsync(storageName, grainId, ttl))
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+
+        return false;
     }
 
     /// <summary>
