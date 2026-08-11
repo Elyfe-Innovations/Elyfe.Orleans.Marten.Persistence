@@ -1,18 +1,37 @@
-# Elyfe.Orleans.Marten.Persistence
+# Elyfe Orleans Marten Providers
 
-Orleans grain storage implementation using Marten (PostgreSQL document store) with optional Redis read-through cache and write-behind overflow. The repository also contains `Elyfe.Orleans.Marten.Reminders`, an Orleans reminder table provider backed by PostgreSQL with TimescaleDB-aware schema support.
+An Orleans provider suite backed by Marten (PostgreSQL document store): grain storage with an optional
+Redis read-through cache and write-behind overflow, cluster membership, reminders, and a build-time
+analyzer for grain-state schema mistakes.
+
+## Packages
+
+All packages ship together under a single GitVersion-derived version — see
+[Release & Deployment](#release--deployment). Every package targets `net9.0` and `net10.0`.
+
+| Package | Provides |
+|---|---|
+| `Elyfe.Orleans.Marten.Persistence` | Grain storage (`IGrainStorage`) plus Redis cache and write-behind |
+| `Elyfe.Orleans.Marten.Clustering` | Cluster membership (`IMembershipTable`) and client gateways (`IGatewayListProvider`) |
+| `Elyfe.Orleans.Marten.Reminders` | Reminder table (`IReminderTable`) with TimescaleDB-aware schema |
+| `Elyfe.Analyzers.Orleans.MartenSchema` | Roslyn analyzer for grain-state and Marten mapping mistakes |
 
 ## Features
 
 - **Marten-backed grain storage**: Persistent grain state in PostgreSQL using Marten document store
+- **Typed store routing**: Bind a provider to a specific `IDocumentStore` implementation via
+  `AddMartenGrainStorage<TStore>`, so each subsystem persists to its own database instead of sharing one
+  ambient default store
 - **Redis read-through cache**: Optional caching layer for improved read performance
 - **Write-behind overflow**: Automatic overflow to Redis cache during writing surges (>100 writes/sec)
 - **Background drainer**: Asynchronous persistence from Redis to Marten
 - **Multi-tenant support**: Tenant isolation via Orleans RequestContext
-- **Marten tenancy per storage**: Configure different IDocumentStore instances per storage name using Marten's multi-tenancy features
+- **Marten tenancy per storage**: Configure different `IDocumentStore` instances per storage name using Marten's multi-tenancy features
 - **ETag-based concurrency**: Optimistic concurrency control with SHA-256 ETags
 - **Backward compatibility**: Automatic migration from old grain ID format
-- **Elyfe reminder storage**: Separate `Elyfe.Orleans.Marten.Reminders` package implementing Orleans `IReminderTable` with service-id isolation, ETag deletes, and Timescale-preferred migrations.
+- **Cluster membership**: Marten-backed Orleans membership with atomic compare-and-swap, replacing the
+  third-party `Interflare.Orleans.Marten.Clustering`
+- **Elyfe reminder storage**: `Elyfe.Orleans.Marten.Reminders` implementing Orleans `IReminderTable` with service-id isolation, ETag deletes, and Timescale-preferred migrations
 
 ## Quick Start
 
@@ -21,6 +40,30 @@ Orleans grain storage implementation using Marten (PostgreSQL document store) wi
 ```csharp
 siloBuilder.AddMartenGrainStorage("Default");
 ```
+
+### Typed Stores (routing a provider to a specific database)
+
+The untyped overloads resolve the unkeyed `IDocumentStore`, which means every provider shares one ambient
+store. The generic overloads take the store type instead, so each subsystem can own its own database while
+still using this provider:
+
+```csharp
+// Register the typed stores themselves (Marten's own API)
+services.AddMartenStore<ISmsMartenStore>(options => options.Connection(smsDb));
+services.AddMartenStore<IPlatformMartenStore>(options => options.Connection(platformDb));
+
+// Route each Orleans storage provider at the store that owns it
+siloBuilder.AddMartenGrainStorage<ISmsMartenStore>("sms");
+siloBuilder.AddMartenGrainStorageWithRedis<ISmsMartenStore>("sms-cached");
+siloBuilder.AddMartenGrainStorageAsDefault<IPlatformMartenStore>();
+
+// Same idea for the other providers
+siloBuilder.UseElyfeMartenClustering<IPlatformMartenStore>();
+siloBuilder.UseElyfeMartenReminderService<IPlatformMartenStore>();
+```
+
+Prefer this over `UseTenantPerStorage` when subsystems must live in **separate databases** rather than
+separate tenants inside one database.
 
 ### With Redis Cache and Write-Behind
 
@@ -307,12 +350,12 @@ Key metrics to monitor:
 
 ### Disabling Cache
 
-Set `ConnectionStrings:Redis` to empty string:
+Leave the `cache` connection string empty (the same key the provider reads — not `Redis`):
 
 ```json
 {
   "ConnectionStrings": {
-    "Redis": ""
+    "cache": ""
   }
 }
 ```
@@ -330,32 +373,35 @@ Cache features are automatically disabled; falls back to Marten-only mode.
 
 ## Testing
 
-### Unit Tests
+Every suite runs against real infrastructure through Testcontainers (PostgreSQL, Redis), so Docker must be
+available. There are **no `Category` traits** — scope runs by project or fully-qualified name.
 
 ```bash
-dotnet test --filter Category=Unit
+# everything, across net9.0 and net10.0
+dotnet test Elyfe.Orleans.Marten.Persistence.slnx
+
+# one package
+dotnet test test/Elyfe.Orleans.Marten.Persistence.Tests/Elyfe.Orleans.Marten.Persistence.Tests.csproj
+dotnet test test/Elyfe.Orleans.Marten.Reminders.Tests/Elyfe.Orleans.Marten.Reminders.Tests.csproj
+dotnet test test/Elyfe.Orleans.Marten.Clustering.Tests/Elyfe.Orleans.Marten.Clustering.Tests.csproj
+
+# a single framework while iterating
+dotnet test Elyfe.Orleans.Marten.Persistence.slnx -f net10.0
+
+# a single test
+dotnet test --filter "FullyQualifiedName~Concurrent_inserts_produce_exactly_one_winner"
 ```
 
-Tests cover:
-- Key generation and formatting
-- Write counter gating logic
-- Cache operations (read/write/dirty/lock)
-- ETag generation
+What the suites cover:
 
-### Integration Tests
-
-```bash
-dotnet test --filter Category=Integration
-```
-
-Tests use Testcontainers (PostgreSQL + Redis) and verify:
-- Read-through cache behavior
-- Write-behind overflow path
-- Background drainer persistence
-- Eventual consistency
-- Multi-tenancy with `UseTenantPerStorage`
-- Data isolation across different storage names
-- Correct tenant selection for reads and writes
+- **Persistence** — key generation and formatting, write-counter gating, cache read/write/dirty/lock, ETag
+  generation, read-through cache, write-behind overflow, background drainer persistence, eventual
+  consistency, typed-store routing, and data isolation across storage names.
+- **Reminders** — service-id isolation, ETag deletes, and Timescale-preferred schema.
+- **Clustering** — membership compare-and-swap, stale row-etag and stale table-version rejection,
+  heartbeats leaving the table version untouched, defunct-entry cleanup, cluster-scoped deletes,
+  concurrent inserts yielding exactly one winner, and gateway filtering.
+- **Analyzer** — grain-state schema diagnostics.
 
 ## Elyfe Orleans Marten Reminders
 
@@ -372,6 +418,81 @@ siloBuilder.UseElyfeMartenReminderService(options =>
 The provider stores reminders in `reminders.orleans_reminders`. The platform migrator owns production DDL and migrates existing Interflare reminder document rows in place via `043-elyfe-orleans-reminders-timescale.sql`.
 
 TimescaleDB is preferred, not required. When the extension is installed, the migration converts the reminder table to a hypertable partitioned by `start_at`; otherwise the same table and indexes run on plain PostgreSQL.
+
+## Elyfe Orleans Marten Clustering
+
+`Elyfe.Orleans.Marten.Clustering` implements Orleans cluster membership (`IMembershipTable`) and the
+client gateway list (`IGatewayListProvider`) on Marten documents. It replaces the third-party
+`Interflare.Orleans.Marten.Clustering` package.
+
+```csharp
+// Silo — membership in whichever store is the unkeyed default
+siloBuilder.UseElyfeMartenClustering();
+
+// Silo — membership pinned to a dedicated infrastructure store
+siloBuilder.UseElyfeMartenClustering<IPlatformMartenStore>();
+
+// Client
+clientBuilder.UseElyfeMartenClustering<IPlatformMartenStore>();
+```
+
+Options (`ElyfeMartenClusteringOptions`):
+
+| Option | Default | Purpose |
+|---|---|---|
+| `DatabaseSchemaName` | `clustering` | Schema owning both documents |
+| `MembershipDocumentAlias` | `orleans_membership` | Silo membership table |
+| `ClusterVersionDocumentAlias` | `orleans_cluster_version` | Compare-and-swap anchor |
+| `MaxStaleness` | 60s | How long a client may reuse a cached gateway list |
+
+### Guarantees
+
+- **Atomic compare-and-swap.** `InsertRow` and `UpdateRow` write the membership row and bump the
+  cluster-version document in a single Marten session. Both documents are mapped with
+  `UseOptimisticConcurrency(true)`, and a lost race returns `false` rather than throwing, because
+  Orleans' membership protocol depends on that boolean.
+- **Heartbeats are cheap.** `UpdateIAmAlive` never bumps the table version; doing so would make every
+  heartbeat look like a membership change and churn the cluster.
+- **Cluster-scoped identity.** Documents are keyed `{clusterId}:{siloAddress}`, so one database can host
+  membership for several clusters.
+- **Instants are `DateTimeOffset`.** PostgreSQL rejects `DateTime` with `Kind=Utc` for
+  `timestamp without time zone`, so values are normalised at the Orleans boundary.
+
+Schema DDL is owned by the consuming application's migrator, exactly as with reminders — the provider
+never auto-creates production tables.
+
+## Release & Deployment
+
+### Versioning
+
+Versions come from **GitVersion** (`6.x`), computed from git history — never hand-edited in a `.csproj`.
+The `semVer` output is passed to `dotnet pack` as `PackageVersion`, so all packages ship one version per
+release. The latest published release is **v1.1.0**.
+
+### Pipeline
+
+`.github/workflows/nuget-publish.yml` has three jobs:
+
+| Job | Runs on | Does |
+|---|---|---|
+| `test` | push to `main`, **and every pull request** | restore, build, `dotnet test` across `net9.0`+`net10.0`, publishes a TRX report |
+| `build` | pull requests and published releases | GitVersion, build, pack **all four** packages, upload the `nupkg` artifact |
+| `publish` | published releases only | OIDC login to NuGet for a short-lived key, then `dotnet nuget push` |
+
+`pull_request` is deliberately **not** filtered to `main`, because stacked PRs target their parent
+feature branch and would otherwise get no CI at all.
+
+### Cutting a release
+
+1. Merge the work into `main` and confirm the `test` job is green.
+2. Create a **GitHub Release** and publish it. Publishing (not tagging alone) is what triggers `publish`.
+3. `build` recomputes the version with GitVersion, packs every project, and `publish` pushes to NuGet.
+
+### Packaging invariant
+
+Every project under `src/` is packable (`IsPackable=true` in `src/Directory.Build.props`) and inherits
+the shared README, icon, and licence. **Adding a project under `src/` therefore requires adding a matching
+`dotnet pack` line to the `Pack Projects` step**, otherwise it builds, tests, and silently never ships.
 
 ## Migration Guide
 

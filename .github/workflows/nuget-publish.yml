@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
+  # Not restricted to main: stacked PRs target their parent feature branch and still need CI.
   pull_request:
-    branches:
-      - main
   release:
     types:
       - published
@@ -14,7 +13,7 @@ on:
 jobs:
   test:
     name: Test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -81,9 +80,13 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore Elyfe.Orleans.Marten.Persistence.slnx
 
+      # Every project under src/ is packable (see src/Directory.Build.props), so each one must be
+      # packed here or it silently never ships.
       - name: Pack Projects
         run: |
           dotnet pack src/Elyfe.Orleans.Marten.Persistence/Elyfe.Orleans.Marten.Persistence.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.semVer }}
+          dotnet pack src/Elyfe.Orleans.Marten.Reminders/Elyfe.Orleans.Marten.Reminders.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.semVer }}
+          dotnet pack src/Elyfe.Orleans.Marten.Clustering/Elyfe.Orleans.Marten.Clustering.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.semVer }}
           dotnet pack src/Elyfe.Analyzers.Orleans.MartenSchema/Elyfe.Analyzers.Orleans.MartenSchema.csproj --configuration Release --no-build --output ./nupkgs /p:PackageVersion=${{ steps.gitversion.outputs.semVer }}
 
       - name: Upload artifact
