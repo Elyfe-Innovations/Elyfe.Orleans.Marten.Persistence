@@ -51,7 +51,6 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         _martenOptions = services.GetService<IOptions<MartenStorageOptions>>()?.Value ?? new MartenStorageOptions();
         _serializer = services.GetService<Serializer>();
         _activatorProvider = services.GetService<IActivatorProvider>();
-        services.GetService<CacheToMartenWriter>()?.RegisterStorage(_storageName);
     }
 
     public async Task ClearStateAsync<T>(string grainType, GrainId grainId, IGrainState<T> grainState)
