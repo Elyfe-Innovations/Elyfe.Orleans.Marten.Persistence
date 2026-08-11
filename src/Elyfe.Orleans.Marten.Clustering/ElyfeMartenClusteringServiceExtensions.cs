@@ -1,7 +1,9 @@
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orleans;
+using Orleans.Configuration;
 using Orleans.Hosting;
 using Orleans.Messaging;
 using Orleans.Runtime;
@@ -21,7 +23,7 @@ public static class ElyfeMartenClusteringServiceExtensions
         builder.Services.AddElyfeMartenClusteringCore(configure);
         builder.Services.AddSingleton<IConfigureMarten, ElyfeMartenClusteringMartenConfiguration>();
         builder.Services.AddSingleton<IElyfeMartenClusteringStore, ElyfeMartenClusteringDefaultStore>();
-        builder.Services.AddSingleton<IMembershipTable, ElyfeMartenMembershipTable>();
+        builder.Services.AddElyfeMartenMembershipTable();
         return builder;
     }
 
@@ -32,7 +34,7 @@ public static class ElyfeMartenClusteringServiceExtensions
     {
         builder.Services.AddElyfeMartenClusteringCore(configure);
         builder.Services.AddElyfeMartenClusteringTypedStore<TStore>();
-        builder.Services.AddSingleton<IMembershipTable, ElyfeMartenMembershipTable>();
+        builder.Services.AddElyfeMartenMembershipTable();
         return builder;
     }
 
@@ -43,7 +45,7 @@ public static class ElyfeMartenClusteringServiceExtensions
         builder.Services.AddElyfeMartenClusteringCore(configure);
         builder.Services.AddSingleton<IConfigureMarten, ElyfeMartenClusteringMartenConfiguration>();
         builder.Services.AddSingleton<IElyfeMartenClusteringStore, ElyfeMartenClusteringDefaultStore>();
-        builder.Services.AddSingleton<IGatewayListProvider, ElyfeMartenGatewayListProvider>();
+        builder.Services.AddElyfeMartenGatewayListProvider();
         return builder;
     }
 
@@ -54,7 +56,7 @@ public static class ElyfeMartenClusteringServiceExtensions
     {
         builder.Services.AddElyfeMartenClusteringCore(configure);
         builder.Services.AddElyfeMartenClusteringTypedStore<TStore>();
-        builder.Services.AddSingleton<IGatewayListProvider, ElyfeMartenGatewayListProvider>();
+        builder.Services.AddElyfeMartenGatewayListProvider();
         return builder;
     }
 
@@ -86,4 +88,24 @@ public static class ElyfeMartenClusteringServiceExtensions
                 serviceProvider.GetRequiredService<TStore>()));
         return services;
     }
+
+    /// <summary>
+    /// Registers the membership table through a factory because it takes the internal
+    /// <see cref="IElyfeMartenClusteringStore"/> seam, and Microsoft DI can only construct public
+    /// constructors when activating by type.
+    /// </summary>
+    private static IServiceCollection AddElyfeMartenMembershipTable(this IServiceCollection services) =>
+        services.AddSingleton<IMembershipTable>(serviceProvider => new ElyfeMartenMembershipTable(
+            serviceProvider.GetRequiredService<IElyfeMartenClusteringStore>(),
+            serviceProvider.GetRequiredService<IOptions<ClusterOptions>>(),
+            serviceProvider.GetRequiredService<ILogger<ElyfeMartenMembershipTable>>()));
+
+    /// <summary>
+    /// Same factory rationale as <see cref="AddElyfeMartenMembershipTable"/> for the client gateway list.
+    /// </summary>
+    private static IServiceCollection AddElyfeMartenGatewayListProvider(this IServiceCollection services) =>
+        services.AddSingleton<IGatewayListProvider>(serviceProvider => new ElyfeMartenGatewayListProvider(
+            serviceProvider.GetRequiredService<IElyfeMartenClusteringStore>(),
+            serviceProvider.GetRequiredService<IOptions<ElyfeMartenClusteringOptions>>(),
+            serviceProvider.GetRequiredService<IOptions<ClusterOptions>>()));
 }
