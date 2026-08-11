@@ -1,4 +1,3 @@
-using Elyfe.Orleans.Marten.Persistence.Options;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -12,20 +11,26 @@ namespace Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 internal static class MartenGrainStorageFactory
 {
     internal static IGrainStorage Create(
-        IServiceProvider services, string name)
-    {
-        // Ensure MartenStorageOptions is available
-        var martenOptions = services.GetService<IOptions<MartenStorageOptions>>() 
-            ?? Microsoft.Extensions.Options.Options.Create(new MartenStorageOptions());
+        IServiceProvider services,
+        string name) =>
+        Create<IDocumentStore>(services, name);
 
-        var martenGrainStorage = ActivatorUtilities.CreateInstance<MartenGrainStorage>(
+    internal static IGrainStorage Create<TStore>(
+        IServiceProvider services,
+        string name)
+        where TStore : IDocumentStore
+    {
+        var store = services.GetRequiredService<TStore>();
+        var storage = ActivatorUtilities.CreateInstance<MartenGrainStorage>(
             services,
             name,
-            services.GetRequiredService<IDocumentStore>(),
+            store,
             services,
             services.GetRequiredService<ILogger<MartenGrainStorage>>(),
             services.GetRequiredService<IOptions<ClusterOptions>>(),
             services.GetRequiredService<IHostEnvironment>());
-        return martenGrainStorage;
+
+        services.GetService<CacheToMartenWriter>()?.RegisterStorage(name, store);
+        return storage;
     }
 }

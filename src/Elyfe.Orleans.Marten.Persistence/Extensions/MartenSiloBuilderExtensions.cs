@@ -1,6 +1,7 @@
 using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 using Elyfe.Orleans.Marten.Persistence.Options;
+using Marten;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -17,21 +18,31 @@ public static class MartenSiloBuilderExtensions
 {
     extension(ISiloBuilder builder)
     {
-        public ISiloBuilder AddMartenGrainStorageAsDefault() => builder.UseMartenGrainStorage(ProviderConstants.DEFAULT_STORAGE_PROVIDER_NAME);
+        public ISiloBuilder AddMartenGrainStorageAsDefault() =>
+            builder.AddMartenGrainStorage<IDocumentStore>(ProviderConstants.DEFAULT_STORAGE_PROVIDER_NAME);
 
-        public ISiloBuilder UseMartenGrainStorage(string storageName = "Marten")
-        {
-            builder.ConfigureServices(services => services.AddMartenGrainStorage(storageName));
-            return builder;
-        }
+        public ISiloBuilder AddMartenGrainStorageAsDefault<TStore>()
+            where TStore : IDocumentStore =>
+            builder.AddMartenGrainStorage<TStore>(ProviderConstants.DEFAULT_STORAGE_PROVIDER_NAME);
 
-        public ISiloBuilder AddMartenGrainStorage(string storageName)
+        public ISiloBuilder UseMartenGrainStorage(string storageName = "Marten") =>
+            builder.AddMartenGrainStorage<IDocumentStore>(storageName);
+
+        public ISiloBuilder UseMartenGrainStorage<TStore>(string storageName = "Marten")
+            where TStore : IDocumentStore =>
+            builder.AddMartenGrainStorage<TStore>(storageName);
+
+        public ISiloBuilder AddMartenGrainStorage(string storageName) =>
+            builder.AddMartenGrainStorage<IDocumentStore>(storageName);
+
+        public ISiloBuilder AddMartenGrainStorage<TStore>(string storageName)
+            where TStore : IDocumentStore
         {
             return builder.ConfigureServices(services =>
             {
-                // Ensure MartenStorageOptions is configured (with defaults if not already configured)
-                services.Configure<MartenStorageOptions>(builder.Configuration.GetSection("Orleans:Persistence:Marten"));
-                services.AddMartenGrainStorage(storageName);
+                services.Configure<MartenStorageOptions>(
+                    builder.Configuration.GetSection("Orleans:Persistence:Marten"));
+                services.AddMartenGrainStorage<TStore>(storageName);
             });
         }
 
@@ -39,7 +50,12 @@ public static class MartenSiloBuilderExtensions
         /// Configures Redis cache and write-behind for Marten grain storage.
         /// </summary>
         public ISiloBuilder AddMartenGrainStorageWithRedis(string storageName,
+            Action<WriteBehindOptions>? configureOptions = null) =>
+            builder.AddMartenGrainStorageWithRedis<IDocumentStore>(storageName, configureOptions);
+
+        public ISiloBuilder AddMartenGrainStorageWithRedis<TStore>(string storageName,
             Action<WriteBehindOptions>? configureOptions = null)
+            where TStore : IDocumentStore
         {
             return builder.ConfigureServices((services) =>
             {
@@ -90,7 +106,7 @@ public static class MartenSiloBuilderExtensions
                 }
             
                 // Add Marten storage
-                services.AddMartenGrainStorage(storageName);
+                services.AddMartenGrainStorage<TStore>(storageName);
             });
         }
     }
@@ -98,9 +114,13 @@ public static class MartenSiloBuilderExtensions
 
     extension(IServiceCollection services)
     {
-        public IServiceCollection AddMartenGrainStorage(string storageName)
+        public IServiceCollection AddMartenGrainStorage(string storageName) =>
+            services.AddMartenGrainStorage<IDocumentStore>(storageName);
+
+        public IServiceCollection AddMartenGrainStorage<TStore>(string storageName)
+            where TStore : IDocumentStore
         {
-            return services.AddGrainStorage(storageName, MartenGrainStorageFactory.Create);
+            return services.AddGrainStorage(storageName, MartenGrainStorageFactory.Create<TStore>);
         }
     }
 }
