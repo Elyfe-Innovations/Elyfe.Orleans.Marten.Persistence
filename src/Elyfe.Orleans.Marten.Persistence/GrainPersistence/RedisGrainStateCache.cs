@@ -52,9 +52,11 @@ public class RedisGrainStateCache(
         }
         catch (Exception ex)
         {
+            // Propagate: a read failure is NOT a cache miss. Callers rely on the distinction to avoid
+            // falling back to Marten when a newer write-behind write may be sitting in this cache.
             logger.LogError(ex, "Failed to read cached state for grain {GrainId} from storage {StorageName}", grainId,
                 storageName);
-            return null;
+            throw;
         }
     }
 
@@ -99,8 +101,11 @@ public class RedisGrainStateCache(
         }
         catch (Exception ex)
         {
+            // Propagate: a failed eviction during a clear would otherwise leave the value in the
+            // cache, where a later read-through would resurrect a state that was just deleted.
             logger.LogError(ex, "Failed to remove cached state for grain {GrainId} from storage {StorageName}",
                 grainId, storageName);
+            throw;
         }
     }
 
@@ -137,6 +142,26 @@ public class RedisGrainStateCache(
         {
             logger.LogError(ex, "Failed to clear dirty marker for grain {GrainId} in storage {StorageName}", grainId,
                 storageName);
+        }
+    }
+
+    public async Task<bool> IsDirtyAsync(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
+            var grainKey = GetGrainKey(grainId);
+            var dirtySetKey = GetDirtySetKey(storageName);
+
+            return await db.SetContainsAsync(dirtySetKey, grainKey);
+        }
+        catch (Exception ex)
+        {
+            // Propagate: an error means "unknown", which callers must treat differently from "clean".
+            logger.LogError(ex, "Failed to check dirty marker for grain {GrainId} in storage {StorageName}",
+                grainId, storageName);
+            throw;
         }
     }
 

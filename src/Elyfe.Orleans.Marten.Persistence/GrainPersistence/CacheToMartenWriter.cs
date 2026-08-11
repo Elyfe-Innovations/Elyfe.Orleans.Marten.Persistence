@@ -175,6 +175,18 @@ public class CacheToMartenWriter : BackgroundService
         // Create MartenGrainData document
         // var document = MartenGrainData.Create(cached.Data, martenId);
 
+        // A concurrent ClearStateAsync (or a newer write) between the initial read and now must win.
+        // Re-read the cached value and persist only if it still holds exactly the state we copied;
+        // otherwise drop the stale copy — a fresh drain cycle will pick up any newer dirty write.
+        var latest = await _cache.ReadAsync<object>(storageName, grainId, cancellationToken);
+        if (latest is null || !string.Equals(latest.ETag, cached.ETag, StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "Dropping stale drain for grain {GrainId} in storage {StorageName}: the cached state changed or was cleared while draining",
+                grainId, storageName);
+            return;
+        }
+
         // Upsert to Marten
         await using var session = _martenOptions.UseTenantPerStorage
             ? _documentStore.LightweightSession(storageName)

@@ -448,8 +448,10 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     }
 
     /// <summary>
-    /// Cache reads are an optimisation over the authoritative Marten document: an unavailable
-    /// cache degrades to a slower read rather than failing the grain call.
+    /// Cache reads are an optimisation over the authoritative Marten document, but only when the grain
+    /// has nothing newer pending in write-behind. A read failure for a grain that MAY have a pending
+    /// write must not fall back to Marten: the cache can hold a newer state than the database, and
+    /// serving the older document would let the grain clobber an already-accepted write.
     /// </summary>
     private async Task<CachedGrainState<T>?> TryReadCacheAsync<T>(GrainId grainId)
     {
@@ -459,9 +461,26 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Cache read failed for grain {GrainId} in storage {StorageName}; falling back to Marten",
-                grainId, _storageName);
-            return null;
+            try
+            {
+                if (!await _cache!.IsDirtyAsync(_storageName, grainId))
+                {
+                    _logger.LogWarning(ex,
+                        "Cache read failed for clean grain {GrainId} in storage {StorageName}; falling back to Marten",
+                        grainId, _storageName);
+                    return null;
+                }
+            }
+            catch (Exception dirtyCheckEx) when (dirtyCheckEx != ex)
+            {
+                throw new OrleansException(
+                    $"Cache unavailable for grain {grainId} in storage {_storageName} and pending write-behind state cannot be determined; refusing to serve possibly stale Marten state.",
+                    dirtyCheckEx);
+            }
+
+            throw new OrleansException(
+                $"Cache read failed for grain {grainId} in storage {_storageName} with a pending write-behind write; refusing to serve stale Marten state.",
+                ex);
         }
     }
 
