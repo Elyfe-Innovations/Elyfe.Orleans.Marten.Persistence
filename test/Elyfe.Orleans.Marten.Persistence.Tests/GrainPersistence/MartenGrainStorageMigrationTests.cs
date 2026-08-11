@@ -214,7 +214,7 @@ public class MartenGrainStorageMigrationTests : IAsyncLifetime
         var verifyState = new GrainState<TestState>();
         await _storage.ReadStateAsync("TestState", grainId, verifyState);
         verifyState.RecordExists.Should().BeFalse("because the state should have been cleared");
-        verifyState.State.Should().BeNull();
+        verifyState.State.Should().NotBeNull();
     }
 
     [Fact]

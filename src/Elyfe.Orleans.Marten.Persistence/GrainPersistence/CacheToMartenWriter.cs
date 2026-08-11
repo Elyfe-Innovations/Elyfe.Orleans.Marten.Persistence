@@ -156,6 +156,30 @@ public class CacheToMartenWriter : BackgroundService
         // Parse grain ID from key
         var grainId = GrainId.Parse(grainKey.Replace('_', '/'));
 
+        // Serialize with ClearStateAsync on the same grain: holding the per-grain lock across the
+        // read-store-writeback window is what stops a clear from landing between the re-validation
+        // read and the Marten commit and resurrecting cleared state.
+        var lockTtl = TimeSpan.FromSeconds(_martenOptions.WriteBehind.DrainLockTtlSeconds);
+        if (!await _cache.TryAcquireGrainLockAsync(storageName, grainId, lockTtl, cancellationToken))
+        {
+            // The outer drain loop treats this as a failure and re-marks the grain dirty for the next
+            // cycle; never drain a grain whose clear may be waiting on the lock.
+            throw new InvalidOperationException($"Grain {grainId} drain lock is held.");
+        }
+
+        try
+        {
+            await DrainGrainCoreAsync(storageName, grainId, grainKey, cancellationToken);
+        }
+        finally
+        {
+            await _cache.ReleaseGrainLockAsync(storageName, grainId, cancellationToken);
+        }
+    }
+
+    private async Task DrainGrainCoreAsync(string storageName, GrainId grainId, string grainKey,
+        CancellationToken cancellationToken)
+    {
         // Read cached state (type-erased, we'll use object)
         var cached = await _cache.ReadAsync<object>(storageName, grainId, cancellationToken);
         if (cached == null)
@@ -175,6 +199,20 @@ public class CacheToMartenWriter : BackgroundService
         // Create MartenGrainData document
         // var document = MartenGrainData.Create(cached.Data, martenId);
 
+        // A concurrent ClearStateAsync (or a newer write) between the initial read and now must win.
+        // Re-read the cached value and persist only if it still holds exactly the state we copied;
+        // otherwise drop the stale copy — a fresh drain cycle will pick up any newer dirty write.
+        // (With the grain lock held, a clear cannot land between this read and the commit; the read
+        // still guards against a concurrent newer write.)
+        var latest = await _cache.ReadAsync<object>(storageName, grainId, cancellationToken);
+        if (latest is null || !string.Equals(latest.ETag, cached.ETag, StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "Dropping stale drain for grain {GrainId} in storage {StorageName}: the cached state changed or was cleared while draining",
+                grainId, storageName);
+            return;
+        }
+
         // Upsert to Marten
         await using var session = _martenOptions.UseTenantPerStorage
             ? _documentStore.LightweightSession(storageName)
@@ -189,6 +227,20 @@ public class CacheToMartenWriter : BackgroundService
                       ?? throw new InvalidOperationException("Failed to generate ETag for cached grain state");
         var newModified = DateTimeOffset.Parse(document.GetType()
             .GetProperty("LastModified")!.GetValue(document)!.ToString()!);
+
+        // A write that landed between the re-validation read and this point must win: write back only
+        // if the cache still holds the value we drained, otherwise leave the newer (still dirty) value
+        // in place for the next drain cycle.
+        var beforeWriteBack = await _cache.ReadAsync<object>(storageName, grainId, cancellationToken);
+        if (beforeWriteBack is null ||
+            !string.Equals(beforeWriteBack.ETag, cached.ETag, StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "Dropping cache write-back for grain {GrainId} in storage {StorageName}: a newer write landed while draining",
+                grainId, storageName);
+            return;
+        }
+
         await _cache.WriteAsync(storageName, grainId, cached.Data, newETag, newModified.ToUnixTimeMilliseconds(),
             cancellationToken);
 
