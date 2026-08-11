@@ -5,7 +5,6 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 using Orleans.Configuration;
-using Orleans.Runtime;
 
 namespace Elyfe.Orleans.Marten.Reminders;
 
@@ -21,13 +20,13 @@ public sealed class ElyfeMartenReminderTable : IReminderTable
     private readonly string _qualifiedMartenTable;
     private TimescaleCapability _timescale;
 
-    public ElyfeMartenReminderTable(
-        IDocumentStore documentStore,
+    internal ElyfeMartenReminderTable(
+        IElyfeMartenReminderStore storeProvider,
         IOptions<ElyfeMartenReminderOptions> options,
         IOptions<ClusterOptions> clusterOptions,
         ILogger<ElyfeMartenReminderTable> logger)
     {
-        _documentStore = documentStore;
+        _documentStore = storeProvider.Store;
         _options = options.Value;
         _clusterOptions = clusterOptions.Value;
         _logger = logger;

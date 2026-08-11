@@ -1,8 +1,11 @@
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orleans;
+using Orleans.Configuration;
 using Orleans.Hosting;
+using Orleans.Runtime;
 
 namespace Elyfe.Orleans.Marten.Reminders;
 
@@ -36,7 +39,8 @@ public static class ElyfeMartenReminderServiceExtensions
 
         services.AddSingleton<IValidateOptions<ElyfeMartenReminderOptions>, ElyfeMartenReminderOptionsValidator>();
         services.AddSingleton<IConfigureMarten, ElyfeMartenReminderMartenConfiguration>();
-        services.AddSingleton<IReminderTable, ElyfeMartenReminderTable>();
+        services.AddSingleton<IElyfeMartenReminderStore, ElyfeMartenReminderDefaultStore>();
+        services.AddElyfeMartenReminderTable();
         services.AddReminders();
         return services;
     }
@@ -57,8 +61,23 @@ public static class ElyfeMartenReminderServiceExtensions
             (serviceProvider, options) =>
                 serviceProvider.GetRequiredService<ElyfeMartenReminderMartenConfiguration>()
                     .Configure(serviceProvider, options));
-        services.AddSingleton<IReminderTable, ElyfeMartenReminderTable>();
+        services.AddSingleton<IElyfeMartenReminderStore>(
+            serviceProvider => new ElyfeMartenReminderTypedStore<TStore>(
+                serviceProvider.GetRequiredService<TStore>()));
+        services.AddElyfeMartenReminderTable();
         services.AddReminders();
         return services;
     }
+
+    /// <summary>
+    /// Registers the reminder table through a factory because it takes the internal
+    /// <see cref="IElyfeMartenReminderStore"/> seam, and Microsoft DI can only construct public
+    /// constructors when activating by type.
+    /// </summary>
+    private static IServiceCollection AddElyfeMartenReminderTable(this IServiceCollection services) =>
+        services.AddSingleton<IReminderTable>(serviceProvider => new ElyfeMartenReminderTable(
+            serviceProvider.GetRequiredService<IElyfeMartenReminderStore>(),
+            serviceProvider.GetRequiredService<IOptions<ElyfeMartenReminderOptions>>(),
+            serviceProvider.GetRequiredService<IOptions<ClusterOptions>>(),
+            serviceProvider.GetRequiredService<ILogger<ElyfeMartenReminderTable>>()));
 }

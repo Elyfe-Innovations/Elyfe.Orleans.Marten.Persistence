@@ -16,4 +16,8 @@
     <PackageReference Include="Microsoft.Extensions.Options" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Elyfe.Orleans.Marten.Reminders.Tests" />
+  </ItemGroup>
+
 </Project>
