@@ -165,6 +165,43 @@ public class RedisGrainStateCache(
         }
     }
 
+    public async Task<bool> TryAcquireGrainLockAsync(string storageName, GrainId grainId, TimeSpan ttl,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
+            var key = GetGrainLockKey(storageName, grainId);
+
+            return await db.StringSetAsync(key, "1", ttl, When.NotExists);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to acquire grain lock for {GrainId} in storage {StorageName}", grainId,
+                storageName);
+            throw;
+        }
+    }
+
+    public async Task ReleaseGrainLockAsync(string storageName, GrainId grainId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var db = redis.GetDatabase(_storageOptions.WriteBehind.CacheDatabase);
+            var key = GetGrainLockKey(storageName, grainId);
+
+            // Plain DEL is safe despite the TTL: the holder reaches this call within TTL or the lock
+            // has already expired and any new holder would itself release after its own operation.
+            await db.KeyDeleteAsync(key);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to release grain lock for {GrainId} in storage {StorageName}", grainId,
+                storageName);
+        }
+    }
+
     public async Task<IReadOnlyList<string>> GetDirtyKeysAsync(string storageName, int batchSize,
         CancellationToken cancellationToken = default)
     {
@@ -256,6 +293,11 @@ public class RedisGrainStateCache(
     private string GetDirtySetKey(string storageName)
     {
         return $"mgs:{serviceId}:{storageName}:dirty";
+    }
+
+    private string GetGrainLockKey(string storageName, GrainId grainId)
+    {
+        return $"mgs:{serviceId}:{storageName}:grain-lock:{GetGrainKey(grainId)}";
     }
 
     private string GetWriteCounterKey(string storageName)

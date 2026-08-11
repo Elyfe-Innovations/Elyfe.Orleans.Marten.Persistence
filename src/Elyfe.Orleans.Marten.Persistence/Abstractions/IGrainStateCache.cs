@@ -44,6 +44,19 @@ public interface IGrainStateCache
     Task<bool> IsDirtyAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Acquires a short-lived, per-grain mutex that serializes write-behind drains with clears of the
+    /// same grain. Both sides must call it, which is what makes a clear immune to an in-flight drain
+    /// resurrecting the cleared state. Implementations MUST propagate failures.
+    /// </summary>
+    Task<bool> TryAcquireGrainLockAsync(string storageName, GrainId grainId, TimeSpan ttl,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Releases the per-grain mutex acquired with <see cref="TryAcquireGrainLockAsync"/>.
+    /// </summary>
+    Task ReleaseGrainLockAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets a batch of dirty grain keys for draining.
     /// </summary>
     Task<IReadOnlyList<string>> GetDirtyKeysAsync(string storageName, int batchSize, CancellationToken cancellationToken = default);
