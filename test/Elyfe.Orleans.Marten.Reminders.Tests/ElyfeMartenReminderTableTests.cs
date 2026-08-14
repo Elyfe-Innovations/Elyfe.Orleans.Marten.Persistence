@@ -3,6 +3,7 @@ using Elyfe.Orleans.Marten.Reminders;
 using JasperFx;
 using Marten;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Orleans;
@@ -275,10 +276,40 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
         tableExists.Should().BeTrue("reminder data should be managed by a Marten document table");
     }
 
+    [Fact]
+    public async Task Typed_registration_resolves_the_reminder_table_when_no_untyped_store_is_registered()
+    {
+        // Regression for the typed reminder overload: it must route the reminder table through the
+        // declared TStore. Registering only the concrete typed store (no IDocumentStore) used to
+        // make IReminderTable unresolvable, or silently bind to an ambient default store.
+        var store = global::Marten.DocumentStore.For(options =>
+        {
+            options.Connection(_postgreSqlContainer.GetConnectionString());
+            options.AutoCreateSchemaObjects = AutoCreate.All;
+        });
+
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton(store);
+            services.AddLogging();
+            services.UseElyfeMartenReminderService<DocumentStore>();
+
+            await using var provider = services.BuildServiceProvider();
+            var table = provider.GetRequiredService<IReminderTable>();
+
+            table.Should().BeOfType<ElyfeMartenReminderTable>();
+        }
+        finally
+        {
+            store.Dispose();
+        }
+    }
+
     private ElyfeMartenReminderTable CreateTable(bool autoCreateSchema, bool preferTimescale, string serviceId = "test-service")
     {
         return new ElyfeMartenReminderTable(
-            DocumentStore,
+            new ElyfeMartenReminderDefaultStore(DocumentStore),
             Options.Create(new ElyfeMartenReminderOptions
             {
                 ConnectionString = _postgreSqlContainer.GetConnectionString(),
