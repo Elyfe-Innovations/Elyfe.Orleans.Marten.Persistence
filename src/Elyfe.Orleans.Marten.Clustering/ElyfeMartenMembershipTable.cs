@@ -214,6 +214,10 @@ internal sealed class ElyfeMartenMembershipTable(
     private static bool IsConcurrencyFailure(Exception exception) => exception switch
     {
         ConcurrencyException => true,
+        // JasperFx raises DocumentAlreadyExistsException (not ConcurrencyException) when an
+        // insert collides with an existing document — the normal race when a second silo
+        // initialises the per-cluster version row.
+        DocumentAlreadyExistsException => true,
         PostgresException postgres when postgres.SqlState == PostgresErrorCodes.UniqueViolation => true,
         AggregateException aggregate => aggregate.InnerExceptions.Any(IsConcurrencyFailure),
         _ => false
