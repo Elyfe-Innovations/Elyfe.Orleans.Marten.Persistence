@@ -28,7 +28,13 @@ public static class ElyfeMartenReminderServiceExtensions
     }
 
 
-    public static IServiceCollection UseElyfeMartenReminderService(
+    /// <summary>
+    /// Registers the reminder document mapping, options and store seam WITHOUT any Orleans
+    /// runtime services. Use from hosts that own the reminder schema but run no silo - migration
+    /// runners, schema tooling, tests - where <c>AddReminders()</c> would pull in
+    /// <c>LocalReminderService</c> and fail DI validation.
+    /// </summary>
+    public static IServiceCollection AddElyfeMartenReminderStore(
         this IServiceCollection services,
         Action<ElyfeMartenReminderOptions>? configure = null)
     {
@@ -40,12 +46,15 @@ public static class ElyfeMartenReminderServiceExtensions
         services.AddSingleton<IValidateOptions<ElyfeMartenReminderOptions>, ElyfeMartenReminderOptionsValidator>();
         services.AddSingleton<IConfigureMarten, ElyfeMartenReminderMartenConfiguration>();
         services.AddSingleton<IElyfeMartenReminderStore, ElyfeMartenReminderDefaultStore>();
-        services.AddElyfeMartenReminderTable();
-        services.AddReminders();
         return services;
     }
 
-    public static IServiceCollection UseElyfeMartenReminderService<TStore>(
+    /// <summary>
+    /// Registers the reminder document mapping, options and store seam against the typed Marten
+    /// store <typeparamref name="TStore"/> WITHOUT any Orleans runtime services. Use from hosts
+    /// that own the reminder schema but run no silo.
+    /// </summary>
+    public static IServiceCollection AddElyfeMartenReminderStore<TStore>(
         this IServiceCollection services,
         Action<ElyfeMartenReminderOptions>? configure = null)
         where TStore : class, IDocumentStore
@@ -64,6 +73,25 @@ public static class ElyfeMartenReminderServiceExtensions
         services.AddSingleton<IElyfeMartenReminderStore>(
             serviceProvider => new ElyfeMartenReminderTypedStore<TStore>(
                 serviceProvider.GetRequiredService<TStore>()));
+        return services;
+    }
+
+    public static IServiceCollection UseElyfeMartenReminderService(
+        this IServiceCollection services,
+        Action<ElyfeMartenReminderOptions>? configure = null)
+    {
+        services.AddElyfeMartenReminderStore(configure);
+        services.AddElyfeMartenReminderTable();
+        services.AddReminders();
+        return services;
+    }
+
+    public static IServiceCollection UseElyfeMartenReminderService<TStore>(
+        this IServiceCollection services,
+        Action<ElyfeMartenReminderOptions>? configure = null)
+        where TStore : class, IDocumentStore
+    {
+        services.AddElyfeMartenReminderStore<TStore>(configure);
         services.AddElyfeMartenReminderTable();
         services.AddReminders();
         return services;

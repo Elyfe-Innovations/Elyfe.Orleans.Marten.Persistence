@@ -306,6 +306,57 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task Store_registration_omits_orleans_runtime_services_so_non_silo_hosts_can_validate()
+    {
+        // Regression: schema owners that run no silo (the migration runner, schema tooling) need the
+        // reminder document mapping but not the reminder service. UseElyfeMartenReminderService calls
+        // AddReminders(), whose LocalReminderService/ReminderInstruments cannot resolve without the
+        // Orleans runtime, so a plain host aborted on DI validation with
+        //   Unable to resolve service for type 'Orleans.Runtime.OrleansInstruments'
+        var store = global::Marten.DocumentStore.For(options =>
+        {
+            options.Connection(_postgreSqlContainer.GetConnectionString());
+            options.AutoCreateSchemaObjects = AutoCreate.All;
+        });
+
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton(store);
+            services.AddLogging();
+            services.AddElyfeMartenReminderStore<DocumentStore>(options =>
+                options.ConnectionString = _postgreSqlContainer.GetConnectionString());
+
+            services.Should().NotContain(
+                descriptor => descriptor.ServiceType == typeof(IReminderTable),
+                "the store registration must not bring the silo-side reminder table");
+
+            await using var provider = services.BuildServiceProvider(
+                new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+            provider.GetService<IReminderTable>().Should().BeNull();
+            provider.GetRequiredService<IOptions<ElyfeMartenReminderOptions>>().Value.ConnectionString
+                .Should().NotBeNullOrWhiteSpace("the store registration still configures options");
+        }
+        finally
+        {
+            store.Dispose();
+        }
+    }
+
+    [Fact]
+    public void Reminder_service_registration_still_adds_the_silo_reminder_table()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.UseElyfeMartenReminderService<DocumentStore>();
+
+        services.Should().Contain(
+            descriptor => descriptor.ServiceType == typeof(IReminderTable),
+            "silo hosts keep getting the reminder table from the service registration");
+    }
+
     private ElyfeMartenReminderTable CreateTable(bool autoCreateSchema, bool preferTimescale, string serviceId = "test-service")
     {
         return new ElyfeMartenReminderTable(
