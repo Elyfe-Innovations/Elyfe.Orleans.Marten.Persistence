@@ -333,6 +333,9 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             if (grainState.State is not null)
             {
                 session.Store(state!);
+                // MARTEN-01: purge the legacy lossy-collapsed document in the
+                // same transaction so stale rows cannot resurface via read fallback.
+                session.Delete<MartenGrainData<T>>(LegacyId(grainId));
                 await session.SaveChangesAsync();
                 grainState.ETag = newETag; // Update the ETag after successful write.
                 grainState.RecordExists = true;
