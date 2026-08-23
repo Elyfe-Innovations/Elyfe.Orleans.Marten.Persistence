@@ -124,8 +124,11 @@ public class CacheToMartenWriter : BackgroundService
                     // Re-add to dirty set for retry
                     try
                     {
-                        // Reconstruct GrainId from key (reverse of GetGrainKey)
-                        var grainId = GrainId.Parse(grainKey.Replace('_', '/'));
+                        // Reconstruct GrainId from key (reverse of GetGrainKey);
+                        // MARTEN-01 keys are Base64Url, legacy keys are the
+                        // lossy '/'->'_' collapse.
+                        if (!GrainKeyEncoding.TryDecodeToGrainId(grainKey, out var grainId))
+                            grainId = GrainId.Parse(grainKey.Replace('_', '/'));
                         await _cache.MarkDirtyAsync(storageName, grainId, cancellationToken);
                     }
                     catch (Exception markEx)
@@ -155,8 +158,10 @@ public class CacheToMartenWriter : BackgroundService
         string grainKey,
         CancellationToken cancellationToken)
     {
-        // Parse grain ID from key
-        var grainId = GrainId.Parse(grainKey.Replace('_', '/'));
+        // Parse grain ID from key; MARTEN-01 keys are Base64Url, legacy keys
+        // use the lossy '/'->'_' collapse.
+        if (!GrainKeyEncoding.TryDecodeToGrainId(grainKey, out var grainId))
+            grainId = GrainId.Parse(grainKey.Replace('_', '/'));
 
         // Serialize with ClearStateAsync on the same grain: holding the per-grain lock across the
         // read-store-writeback window is what stops a clear from landing between the re-validation

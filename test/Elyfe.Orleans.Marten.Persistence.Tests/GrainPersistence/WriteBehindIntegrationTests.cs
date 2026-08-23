@@ -115,7 +115,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         // Verify it's marked dirty
         var db = _redis.GetDatabase(martenStorageOptions.Value.WriteBehind.CacheDatabase);
         var dirtySetKey = $"mgs:test-cluster:TestStorage:dirty";
-        var isDirty = await db.SetContainsAsync(dirtySetKey, "test_grain_overflow");
+        var isDirty = await db.SetContainsAsync(dirtySetKey, GrainKeyEncoding.Encode("test/grain/overflow"));
 
         isDirty.Should().BeTrue();
     }
@@ -182,7 +182,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         {
             await using var session = _documentStore.QuerySession();
             document = await session.LoadAsync<MartenGrainData<byte[]>>(
-                "test-cluster_internal_grain_overflow");
+                $"test-cluster_{GrainKeyEncoding.Encode("internal/grain/overflow")}");
             if (document is null)
                 await Task.Delay(TimeSpan.FromMilliseconds(100));
         }
@@ -198,7 +198,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         var dirtySet = _redis.GetDatabase(martenStorageOptions.Value.WriteBehind.CacheDatabase);
         var isDirty = await dirtySet.SetContainsAsync(
             "mgs:test-cluster:TestStorage:dirty",
-            "internal_grain_overflow");
+            GrainKeyEncoding.Encode("internal/grain/overflow"));
         isDirty.Should().BeFalse();
     }
 
@@ -309,7 +309,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
 
         // Verify state was persisted to Marten
         await using var session = _documentStore.QuerySession();
-        var martenId = "test-cluster_test_grain_drain";
+        var martenId = $"test-cluster_{GrainKeyEncoding.Encode("test/grain/drain")}";
         var document = await session.LoadAsync<MartenGrainData<TestState>>(martenId);
 
         document.Should().NotBeNull();
@@ -318,7 +318,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         // Verify dirty marker was cleared
         var db = _redis.GetDatabase();
         var dirtySetKey = "mgs:test-cluster:Default:dirty";
-        var isDirty = await db.SetContainsAsync(dirtySetKey, "test_grain_drain");
+        var isDirty = await db.SetContainsAsync(dirtySetKey, GrainKeyEncoding.Encode("test/grain/drain"));
 
         isDirty.Should().BeFalse();
     }

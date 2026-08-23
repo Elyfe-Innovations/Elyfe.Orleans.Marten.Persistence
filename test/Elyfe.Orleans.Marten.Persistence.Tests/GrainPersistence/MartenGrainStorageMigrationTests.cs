@@ -58,7 +58,7 @@ public class MartenGrainStorageMigrationTests : IAsyncLifetime
 
         var grainId = GrainId.Parse("TestState/migration-grain-1");
         var oldId = grainId.ToString(); // The old ID format
-        var newId = $"test-cluster_{grainId.ToString().Replace('/', '_')}"; // The new ID format
+        var newId = $"test-cluster_{GrainKeyEncoding.Encode(grainId)}"; // The new ID format
 
         // Create a grain document with the old ID directly in the database
         var originalState = new TestState { Name = "Original", Value = 42 };
@@ -138,7 +138,7 @@ public class MartenGrainStorageMigrationTests : IAsyncLifetime
 
         var grainId = GrainId.Parse("TestState/migration-grain-3");
         var oldId = grainId.ToString(); // The old ID format
-        var newId = $"test-cluster_{grainId.ToString().Replace('/', '_')}"; // The new ID format
+        var newId = $"test-cluster_{GrainKeyEncoding.Encode(grainId)}"; // The new ID format
 
         // Create a grain document with the old ID directly in the database
         var originalState = new TestState { Name = "BeforeUpdate", Value = 200 };
@@ -181,7 +181,7 @@ public class MartenGrainStorageMigrationTests : IAsyncLifetime
 
         var grainId = GrainId.Parse("TestState/migration-grain-4");
         var oldId = grainId.ToString(); // The old ID format
-        var newId = $"test-cluster_{grainId.ToString().Replace('/', '_')}"; // The new ID format
+        var newId = $"test-cluster_{GrainKeyEncoding.Encode(grainId)}"; // The new ID format
 
         // Create a grain document with the old ID directly in the database
         var originalState = new TestState { Name = "ToBeDeleted", Value = 999 };

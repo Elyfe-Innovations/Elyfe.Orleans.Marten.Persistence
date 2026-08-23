@@ -94,7 +94,7 @@ public class MartenMultiTenancyTests : IAsyncLifetime
 
         // Assert - Verify data is isolated in different tenants
         await using var smsSession = _documentStore.QuerySession("sms");
-        var smsId = "test-cluster_user_123";
+        var smsId = $"test-cluster_{GrainKeyEncoding.Encode("user/123")}";
         var smsDocument = await smsSession.LoadAsync<MartenGrainData<TestState>>(smsId);
 
         smsDocument.Should().NotBeNull();
@@ -102,7 +102,7 @@ public class MartenMultiTenancyTests : IAsyncLifetime
         smsDocument.Data.Value.Should().Be(100);
 
         await using var eventsSession = _documentStore.QuerySession("events");
-        var eventsId = "test-cluster_user_123";
+        var eventsId = $"test-cluster_{GrainKeyEncoding.Encode("user/123")}";
         var eventsDocument = await eventsSession.LoadAsync<MartenGrainData<TestState>>(eventsId);
 
         eventsDocument.Should().NotBeNull();
@@ -217,12 +217,12 @@ public class MartenMultiTenancyTests : IAsyncLifetime
 
         // Assert - SMS tenant should be cleared
         await using var smsSession = _documentStore.QuerySession("sms");
-        var smsDocument = await smsSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_temp_999");
+        var smsDocument = await smsSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("temp/999")}");
         smsDocument.Should().BeNull();
 
         // Assert - Events tenant should still have data
         await using var eventsSession = _documentStore.QuerySession("events");
-        var eventsDocument = await eventsSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_temp_999");
+        var eventsDocument = await eventsSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("temp/999")}");
         eventsDocument.Should().NotBeNull();
         eventsDocument!.Data.TextValue.Should().Be("Temporary");
     }
@@ -257,7 +257,7 @@ public class MartenMultiTenancyTests : IAsyncLifetime
 
         // Assert - Should be stored in default tenant (no tenant specified)
         await using var session = _documentStore.QuerySession();
-        var document = await session.LoadAsync<MartenGrainData<TestState>>("test-cluster_product_777");
+        var document = await session.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("product/777")}");
         
         document.Should().NotBeNull();
         document!.Data.TextValue.Should().Be("Product Data");
@@ -298,7 +298,7 @@ public class MartenMultiTenancyTests : IAsyncLifetime
         for (int i = 0; i < storageNames.Length; i++)
         {
             await using var session = _documentStore.QuerySession(storageNames[i]);
-            var document = await session.LoadAsync<MartenGrainData<TestState>>($"test-cluster_item_{i}");
+            var document = await session.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode($"item/{i}")}");
             
             document.Should().NotBeNull();
             document!.Data.TextValue.Should().Be($"{storageNames[i]} Data");
