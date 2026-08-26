@@ -280,7 +280,10 @@ public class RedisGrainStateCache(
 
     private string GetGrainKey(GrainId grainId)
     {
-        return grainId.ToString().Replace('/', '_');
+        // MARTEN-01: reversible encoding; the lossy '/'->'_' collapse merged
+        // distinct grains onto one cache entry. Old cache entries simply miss
+        // after deploy and repopulate from Marten.
+        return GrainKeyEncoding.Encode(grainId);
     }
 
     private string GetStateHashKey(string storageName)

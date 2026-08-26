@@ -122,10 +122,10 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var drained = await WaitUntilAsync(async () =>
         {
             await using var smsPollSession = _documentStore.QuerySession("sms");
-            var smsPollDocument = await smsPollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_message_101");
+            var smsPollDocument = await smsPollSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("message/101")}");
 
             await using var eventsPollSession = _documentStore.QuerySession("events");
-            var eventsPollDocument = await eventsPollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_ticket_202");
+            var eventsPollDocument = await eventsPollSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("ticket/202")}");
 
             return smsPollDocument?.Data.TextValue == "SMS Message" &&
                    eventsPollDocument?.Data.TextValue == "Event Ticket";
@@ -138,7 +138,7 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
 
         // Assert - Verify SMS data is in SMS tenant
         await using var smsSession = _documentStore.QuerySession("sms");
-        var smsDocument = await smsSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_message_101");
+        var smsDocument = await smsSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("message/101")}");
 
         smsDocument.Should().NotBeNull();
         smsDocument!.Data.TextValue.Should().Be("SMS Message");
@@ -146,14 +146,14 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
 
         // Assert - Verify Events data is in Events tenant
         await using var eventsSession = _documentStore.QuerySession("events");
-        var eventsDocument = await eventsSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_ticket_202");
+        var eventsDocument = await eventsSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("ticket/202")}");
 
         eventsDocument.Should().NotBeNull();
         eventsDocument!.Data.TextValue.Should().Be("Event Ticket");
         eventsDocument.Data.Value.Should().Be(202);
 
         // Assert - Verify data isolation (SMS tenant shouldn't have events data)
-        var crossCheck = await smsSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_ticket_202");
+        var crossCheck = await smsSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("ticket/202")}");
         crossCheck.Should().BeNull();
     }
 
@@ -228,10 +228,10 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var drained = await WaitUntilAsync(async () =>
         {
             await using var financePollSession = _documentStore.QuerySession("finance");
-            var financePollDocument = await financePollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_payment_301");
+            var financePollDocument = await financePollSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("payment/301")}");
 
             await using var ussdPollSession = _documentStore.QuerySession("ussd");
-            var ussdPollDocument = await ussdPollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_session_402");
+            var ussdPollDocument = await ussdPollSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("session/402")}");
 
             return financePollDocument?.Data.TextValue == "Payment Record" &&
                    ussdPollDocument?.Data.TextValue == "USSD Session";
@@ -244,12 +244,12 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
 
         // Assert - Verify data is persisted to correct tenants
         await using var financeSession = _documentStore.QuerySession("finance");
-        var financeDocument = await financeSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_payment_301");
+        var financeDocument = await financeSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("payment/301")}");
         financeDocument.Should().NotBeNull();
         financeDocument!.Data.TextValue.Should().Be("Payment Record");
 
         await using var ussdSession = _documentStore.QuerySession("ussd");
-        var ussdDocument = await ussdSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_session_402");
+        var ussdDocument = await ussdSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("session/402")}");
         ussdDocument.Should().NotBeNull();
         ussdDocument!.Data.TextValue.Should().Be("USSD Session");
     }
@@ -301,7 +301,7 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var drained = await WaitUntilAsync(async () =>
         {
             await using var pollSession = _documentStore.QuerySession("sms");
-            var pollDocument = await pollSession.LoadAsync<MartenGrainData<TestState>>("test-cluster_broadcast_555");
+            var pollDocument = await pollSession.LoadAsync<MartenGrainData<TestState>>($"test-cluster_{GrainKeyEncoding.Encode("broadcast/555")}");
             return pollDocument?.Data.TextValue == "Broadcast Message";
         }, TimeSpan.FromSeconds(30));
 

@@ -95,6 +95,13 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         else
             session.Delete<MartenGrainData<T>>(id);
 
+        // MARTEN-01: also purge the legacy lossy-collapsed document so a cleared
+        // grain cannot be resurrected by the read fallback finding stale rows.
+        if (!typeof(T).IsVisible)
+            session.Delete<MartenGrainData<byte[]>>(LegacyId(grainId));
+        else
+            session.Delete<MartenGrainData<T>>(LegacyId(grainId));
+
         await session.SaveChangesAsync();
 
         // Orleans storage contract: after a clear the grain observes a fresh, empty state.
@@ -170,11 +177,23 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
                 }
                 else
                 {
-                    // Orleans storage contract: State must be a usable instance even when no
-                    // record exists, otherwise every grain has to null-guard on first activation.
-                    grainState.State = CreateDefaultState<T>();
-                    grainState.RecordExists = false;
-                    grainState.ETag = null;
+                    // MARTEN-01: also try the legacy lossy collapsed id so rows
+                    // written before the encoding fix still load; they migrate
+                    // forward on first successful read.
+                    var legacyId = LegacyId(grainId);
+                    document = await session.LoadAsync<MartenGrainData<T>>(legacyId);
+                    if (document != null)
+                    {
+                        await MigrateGrainStateAsync(grainState, document, id, legacyId);
+                    }
+                    else
+                    {
+                        // Orleans storage contract: State must be a usable instance even when no
+                        // record exists, otherwise every grain has to null-guard on first activation.
+                        grainState.State = CreateDefaultState<T>();
+                        grainState.RecordExists = false;
+                        grainState.ETag = null;
+                    }
                 }
             }
         }
@@ -314,6 +333,9 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             if (grainState.State is not null)
             {
                 session.Store(state!);
+                // MARTEN-01: purge the legacy lossy-collapsed document in the
+                // same transaction so stale rows cannot resurface via read fallback.
+                session.Delete<MartenGrainData<T>>(LegacyId(grainId));
                 await session.SaveChangesAsync();
                 grainState.ETag = newETag; // Update the ETag after successful write.
                 grainState.RecordExists = true;
@@ -562,8 +584,14 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
 
     private string GenerateId(GrainId grainId)
     {
-        return $"{_clusterService}_{grainId.ToString().Replace('/', '_')}";
+        // MARTEN-01: Base64Url-encode the full grain id. The previous lossy
+        // '/'->'_' collapse merged distinct grain ids onto one document.
+        return $"{_clusterService}_{GrainKeyEncoding.Encode(grainId)}";
     }
+
+    /// <summary>Legacy lossy document id, readable only during migration.</summary>
+    private string LegacyId(GrainId grainId)
+        => $"{_clusterService}_{GrainKeyEncoding.LegacyEncode(grainId.ToString())}";
 
 
     /// <summary>
