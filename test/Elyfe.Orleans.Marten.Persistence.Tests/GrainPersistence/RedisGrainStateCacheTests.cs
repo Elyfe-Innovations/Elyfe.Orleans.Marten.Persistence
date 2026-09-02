@@ -191,7 +191,7 @@ public class RedisGrainStateCacheTests
         var etag = "test-etag";
         var lastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        await cache.WriteAsync("TestStorage", grainId, state, etag, lastModified);
+        await cache.WriteAsync("TestStorage", grainId, state, etag, lastModified, lastModified);
 
         // Verify HashSet was called
         mockDb.Verify(db => db.HashSetAsync(

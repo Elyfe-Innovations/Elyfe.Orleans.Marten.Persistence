@@ -242,8 +242,8 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         var testState = new TestState { TextValue = "cached-value" };
 
         // Write to cache directly
-        await cache.WriteAsync("TestStorage", grainId, testState, "test-etag",
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var cachedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await cache.WriteAsync("TestStorage", grainId, testState, "test-etag", cachedAt, cachedAt);
 
         // Read should hit cache
         var grainState = new GrainState<TestState>();
@@ -282,7 +282,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         var etag = "drain-etag";
         var lastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        await cache.WriteAsync("Default", grainId, testState, etag, lastModified);
+        await cache.WriteAsync("Default", grainId, testState, etag, lastModified, lastModified);
         await cache.MarkDirtyAsync("Default", grainId);
 
         // Create drainer

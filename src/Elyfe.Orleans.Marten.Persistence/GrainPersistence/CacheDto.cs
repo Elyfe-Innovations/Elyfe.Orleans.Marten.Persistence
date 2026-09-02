@@ -34,7 +34,7 @@ public class CacheDto<T>
         
     }
 
-    public CacheDto(T value, string etag, long lastModified)
+    public CacheDto(T value, string etag, long lastModified, long createdAt)
     {
         CacheType = typeof(T);
         SerializedData = JsonSerializer.Serialize(value, new JsonSerializerOptions
@@ -43,9 +43,11 @@ public class CacheDto<T>
         });
         ETag = etag;
         LastModified = lastModified;
+        CreatedAt = createdAt;
     }
 
 
     public string ETag { get; init; } = null!;
     public long LastModified { get; init; }
+    public long CreatedAt { get; init; }
 }

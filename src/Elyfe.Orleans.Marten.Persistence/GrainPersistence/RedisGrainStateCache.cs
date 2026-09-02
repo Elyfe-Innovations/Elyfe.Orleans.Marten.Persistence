@@ -48,7 +48,8 @@ public class RedisGrainStateCache(
                 return null;
             }
 
-            return new CachedGrainState<T>(dto.GetData()!, dto.ETag, dto.LastModified, dto.CacheType);
+            var createdAt = dto.CreatedAt == 0 ? dto.LastModified : dto.CreatedAt;
+            return new CachedGrainState<T>(dto.GetData()!, dto.ETag, dto.LastModified, createdAt, dto.CacheType);
         }
         catch (Exception ex)
         {
@@ -61,7 +62,7 @@ public class RedisGrainStateCache(
     }
 
     public async Task WriteAsync<T>(string storageName, GrainId grainId, T state, string etag, long lastModified,
-        CancellationToken cancellationToken = default)
+        long createdAt, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -69,7 +70,7 @@ public class RedisGrainStateCache(
             var grainKey = GetGrainKey(grainId);
             var stateHashKey = GetStateHashKey(storageName);
 
-            var dto = new CacheDto<T>(state, etag, lastModified);
+            var dto = new CacheDto<T>(state, etag, lastModified, createdAt);
             var json = JsonSerializer.Serialize(dto, _jsonOptions);
 
             await db.HashSetAsync(stateHashKey, grainKey, json);

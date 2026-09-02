@@ -202,6 +202,10 @@ public class CacheToMartenWriter : BackgroundService
         var document = genericType
             .GetMethod("Create")?
             .Invoke(null, new object?[] { cached.Data, martenId })!;
+        var createdAt = cached.CreatedAt == 0 ? cached.LastModified : cached.CreatedAt;
+        document.GetType()
+            .GetProperty(nameof(MartenGrainData<object>.CreatedAt))!
+            .SetValue(document, DateTimeOffset.FromUnixTimeMilliseconds(createdAt));
 
         // Create MartenGrainData document
         // var document = MartenGrainData.Create(cached.Data, martenId);
@@ -248,7 +252,13 @@ public class CacheToMartenWriter : BackgroundService
             return;
         }
 
-        await _cache.WriteAsync(storageName, grainId, cached.Data, newETag, newModified.ToUnixTimeMilliseconds(),
+        await _cache.WriteAsync(
+            storageName,
+            grainId,
+            cached.Data,
+            newETag,
+            newModified.ToUnixTimeMilliseconds(),
+            createdAt,
             cancellationToken);
 
         // Clear dirty marker

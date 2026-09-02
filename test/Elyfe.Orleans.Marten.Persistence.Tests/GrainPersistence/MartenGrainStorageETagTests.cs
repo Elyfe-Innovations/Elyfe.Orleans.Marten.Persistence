@@ -3,6 +3,7 @@ using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.GrainPersistence;
 using Elyfe.Orleans.Marten.Persistence.Options;
 using Marten;
+using Marten.TimescaleDB;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -47,6 +48,10 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
             options.Connection(_postgreSqlContainer.GetConnectionString());
             options.Schema.For<MartenGrainData<byte[]>>()
                 .DocumentAlias("opaque_grain_states");
+            options.Schema.For<MartenGrainData<HypertableTestState>>()
+                .DocumentAlias("hypertable_grain_states");
+            options.UseTimescaleDB(timescale =>
+                timescale.DocumentAsHypertable<MartenGrainData<HypertableTestState>>(x => x.CreatedAt));
         });
 
         var logger = new NullLogger<MartenGrainStorage>();
@@ -121,6 +126,37 @@ public class MartenGrainStorageETagTests : IAsyncLifetime
         readGrainState.ETag.Should().Be(originalETag);
         readGrainState.State!.Name.Should().Be("Test");
         readGrainState.State.Value.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task WriteStateAsync_Preserves_native_Timescale_partition_identity_across_updates()
+    {
+        ArgumentNullException.ThrowIfNull(_storage);
+        ArgumentNullException.ThrowIfNull(_documentStore);
+        var grainState = new GrainState<HypertableTestState>
+        {
+            State = new HypertableTestState { Name = "Created", Value = 1 }
+        };
+        var grainId = GrainId.Parse("HypertableTestState/timescale-grain");
+
+        await _storage.WriteStateAsync(nameof(HypertableTestState), grainId, grainState);
+
+        DateTimeOffset createdAt;
+        await using (var firstRead = _documentStore.QuerySession())
+        {
+            var first = await firstRead.Query<MartenGrainData<HypertableTestState>>().SingleAsync();
+            createdAt = first.CreatedAt;
+        }
+
+        grainState.State = new HypertableTestState { Name = "Updated", Value = 2 };
+        await _storage.WriteStateAsync(nameof(HypertableTestState), grainId, grainState);
+
+        await using var secondRead = _documentStore.QuerySession();
+        var documents = await secondRead.Query<MartenGrainData<HypertableTestState>>().ToListAsync();
+        documents.Should().ContainSingle();
+        documents[0].CreatedAt.Should().Be(createdAt);
+        documents[0].Data.Name.Should().Be("Updated");
+        documents[0].Data.Value.Should().Be(2);
     }
 
     [Fact]
@@ -485,7 +521,7 @@ internal class ThrowingGrainStateCache : IGrainStateCache
         CancellationToken cancellationToken = default) => throw new InvalidOperationException("cache down");
 
     public Task WriteAsync<T>(string storageName, GrainId grainId, T state, string etag, long lastModified,
-        CancellationToken cancellationToken = default) => throw new InvalidOperationException("cache down");
+        long createdAt, CancellationToken cancellationToken = default) => throw new InvalidOperationException("cache down");
 
     public virtual Task RemoveAsync(string storageName, GrainId grainId, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
@@ -564,6 +600,12 @@ internal sealed class LockBusyGrainStateCache : ThrowingGrainStateCache
     }
 }
 
+
+public sealed class HypertableTestState
+{
+    public string Name { get; set; } = string.Empty;
+    public int Value { get; set; }
+}
 [GenerateSerializer]
 internal sealed class InternalTestState
 {

@@ -16,7 +16,8 @@ public interface IGrainStateCache
     /// <summary>
     /// Writes grain state to cache.
     /// </summary>
-    Task WriteAsync<T>(string storageName, GrainId grainId, T state, string etag, long lastModified, CancellationToken cancellationToken = default);
+    Task WriteAsync<T>(string storageName, GrainId grainId, T state, string etag, long lastModified, long createdAt,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes grain state from cache.
@@ -80,5 +81,10 @@ public interface IGrainStateCache
 /// <summary>
 /// Cached grain state DTO.
 /// </summary>
-public record CachedGrainState<T>(T Data, string ETag, long LastModified, Type stateType);
+public record CachedGrainState<T>(
+    T Data,
+    string ETag,
+    long LastModified,
+    long CreatedAt,
+    Type stateType);
 
