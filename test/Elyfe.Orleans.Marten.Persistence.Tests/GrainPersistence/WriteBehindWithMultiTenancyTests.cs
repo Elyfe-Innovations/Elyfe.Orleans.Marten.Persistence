@@ -107,10 +107,10 @@ public class WriteBehindWithMultiTenancyTests : IAsyncLifetime
         var eventsEtag = "events-etag-456";
         var lastModified = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        await cache.WriteAsync("sms", smsGrainId, smsState, smsEtag, lastModified);
+        await cache.WriteAsync("sms", smsGrainId, smsState, smsEtag, lastModified, lastModified);
         await cache.MarkDirtyAsync("sms", smsGrainId);
 
-        await cache.WriteAsync("events", eventsGrainId, eventsState, eventsEtag, lastModified);
+        await cache.WriteAsync("events", eventsGrainId, eventsState, eventsEtag, lastModified, lastModified);
         await cache.MarkDirtyAsync("events", eventsGrainId);
 
         // Act - Run drainer

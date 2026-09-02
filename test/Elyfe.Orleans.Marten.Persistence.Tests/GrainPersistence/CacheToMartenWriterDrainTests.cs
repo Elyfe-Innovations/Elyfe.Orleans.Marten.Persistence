@@ -205,7 +205,7 @@ public sealed class CacheToMartenWriterDrainTests : IAsyncLifetime
         }
 
         public Task WriteAsync<T>(string storageName, GrainId grainId, T state, string etag, long lastModified,
-            CancellationToken cancellationToken = default)
+            long createdAt, CancellationToken cancellationToken = default)
         {
             WriteCalls++;
             _write.TrySetResult();
@@ -265,6 +265,7 @@ public sealed class CacheToMartenWriterDrainTests : IAsyncLifetime
             new DrainTestState { Name = "Stale", Value = 1 },
             etag,
             1_700_000_000_000,
+            1_699_000_000_000,
             typeof(DrainTestState));
     }
 

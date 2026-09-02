@@ -10,6 +10,11 @@ public class MartenGrainData<TData>
     public required TData Data { get; set; }
     public required string Id { get; set; }
     public DateTimeOffset LastModified { get; set; }
+    /// <summary>
+    /// Immutable document creation timestamp. Native Marten Timescale mappings use this as the
+    /// partition column and composite-primary-key component; it must survive every state update.
+    /// </summary>
+    public DateTimeOffset CreatedAt { get; set; }
 
     private string? _cachedEtag;
 
@@ -46,6 +51,13 @@ public class MartenGrainData<TData>
     
     public static MartenGrainData<TData> Create(TData data, string id)
     {
-        return new MartenGrainData<TData> { Data = data, Id = id, LastModified = DateTimeOffset.Now };
+        var now = DateTimeOffset.Now;
+        return new MartenGrainData<TData>
+        {
+            Data = data,
+            Id = id,
+            LastModified = now,
+            CreatedAt = now
+        };
     }
 }
