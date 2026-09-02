@@ -16,9 +16,6 @@ public sealed class ElyfeMartenReminderTable : IReminderTable
     private readonly ElyfeMartenReminderOptions _options;
     private readonly ClusterOptions _clusterOptions;
     private readonly ILogger<ElyfeMartenReminderTable> _logger;
-    private readonly NpgsqlDataSource? _dataSource;
-    private readonly string _qualifiedMartenTable;
-    private TimescaleCapability _timescale;
 
     internal ElyfeMartenReminderTable(
         IElyfeMartenReminderStore storeProvider,
@@ -30,12 +27,6 @@ public sealed class ElyfeMartenReminderTable : IReminderTable
         _options = options.Value;
         _clusterOptions = clusterOptions.Value;
         _logger = logger;
-        _qualifiedMartenTable = $"{QuoteIdentifier(_options.SchemaName)}.{QuoteIdentifier($"mt_doc_{_options.DocumentAlias}")}";
-
-        if (!string.IsNullOrWhiteSpace(_options.ConnectionString))
-        {
-            _dataSource = new NpgsqlDataSourceBuilder(_options.ConnectionString).Build();
-        }
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -55,13 +46,7 @@ public sealed class ElyfeMartenReminderTable : IReminderTable
             await _documentStore.Storage.ApplyAllConfiguredChangesToDatabaseAsync(AutoCreate.CreateOrUpdate);
         }
 
-        _timescale = await DetectTimescaleAsync(CancellationToken.None);
-        _logger.LogInformation(
-            "Elyfe Marten reminder table initialized. Schema={Schema} Alias={Alias} TimescaleInstalled={TimescaleInstalled} TableIsHypertable={TableIsHypertable}",
-            _options.SchemaName,
-            _options.DocumentAlias,
-            _timescale.ExtensionInstalled,
-            _timescale.TableIsHypertable);
+        await AssertDocumentTableIsUpsertableAsync(CancellationToken.None);
     }
 
     public async Task<ReminderTableData> ReadRows(GrainId grainId)
@@ -163,60 +148,59 @@ public sealed class ElyfeMartenReminderTable : IReminderTable
 
     private string BuildId(GrainId grainId, string reminderName) => ElyfeMartenReminderDocument.BuildId(ServiceId, grainId, reminderName);
 
-    private async Task<TimescaleCapability> DetectTimescaleAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Marten writes documents with an inline <c>INSERT ... ON CONFLICT (id) DO UPDATE</c>, so the
+    /// reminder document table must carry a single-column primary key on <c>id</c>. A key that
+    /// includes any other column - a TimescaleDB hypertable partitioned on <c>mt_created_at</c>, for
+    /// instance - cannot be inferred as the arbiter index, and PostgreSQL then rejects every reminder
+    /// write with 42P10 ("there is no unique or exclusion constraint matching the ON CONFLICT
+    /// specification"). Nothing observes that until a grain registers a reminder, so the shape is
+    /// asserted while the silo is still starting rather than discovered as a permanently broken
+    /// reminder subsystem.
+    /// </summary>
+    private async Task AssertDocumentTableIsUpsertableAsync(CancellationToken cancellationToken)
     {
-        if (!_options.PreferTimescale || _dataSource is null)
-        {
-            return new TimescaleCapability(false, false);
-        }
+        var tableName = $"mt_doc_{_options.DocumentAlias}";
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var extensionCommand = CreateCommand(connection, "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')");
-        var installed = (bool)(await extensionCommand.ExecuteScalarAsync(cancellationToken) ?? false);
-        if (!installed)
-        {
-            return new TimescaleCapability(false, false);
-        }
-
-        const string hypertableSql = """
-            SELECT EXISTS (
-                SELECT 1
-                FROM timescaledb_information.hypertables
-                WHERE hypertable_schema = @schemaName AND hypertable_name = @tableName)
+        const string primaryKeySql = """
+            SELECT array_agg(att.attname ORDER BY key.ordinality)
+            FROM pg_constraint con
+            JOIN pg_class cls ON cls.oid = con.conrelid
+            JOIN pg_namespace nsp ON nsp.oid = cls.relnamespace
+            CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality)
+            JOIN pg_attribute att ON att.attrelid = cls.oid AND att.attnum = key.attnum
+            WHERE nsp.nspname = @schemaName
+              AND cls.relname = @tableName
+              AND con.contype = 'p'
             """;
-        await using var hypertableCommand = CreateCommand(connection, hypertableSql);
-        AddText(hypertableCommand, "schemaName", _options.SchemaName);
-        AddText(hypertableCommand, "tableName", $"mt_doc_{_options.DocumentAlias}");
-        var isHypertable = (bool)(await hypertableCommand.ExecuteScalarAsync(cancellationToken) ?? false);
-        return new TimescaleCapability(true, isHypertable);
-    }
 
-    private async Task EnsureTimescaleHypertableAsync(CancellationToken cancellationToken)
-    {
-        if (!_options.PreferTimescale || _dataSource is null)
+        // Deliberately Marten's own database rather than a separately configured connection string:
+        // the assertion must cover the connection Marten actually writes reminders through, and must
+        // not be skippable by a host that registers the store without repeating its connection string.
+        await using var connection = _documentStore.Storage.Database.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = CreateCommand(connection, primaryKeySql);
+        AddText(command, "schemaName", _options.SchemaName);
+        AddText(command, "tableName", tableName);
+        var primaryKeyColumns = await command.ExecuteScalarAsync(cancellationToken) as string[];
+
+        if (primaryKeyColumns is null || primaryKeyColumns.Length == 0)
         {
-            return;
+            throw new InvalidOperationException(
+                $"The Orleans reminder document table \"{_options.SchemaName}\".\"{tableName}\" is missing or has no primary key. Apply the platform database migrations before starting the silo.");
         }
 
-        var capability = await DetectTimescaleAsync(cancellationToken);
-        if (!capability.ExtensionInstalled || capability.TableIsHypertable)
+        if (primaryKeyColumns is not ["id"])
         {
-            return;
+            throw new InvalidOperationException(
+                $"The Orleans reminder document table \"{_options.SchemaName}\".\"{tableName}\" has primary key ({string.Join(", ", primaryKeyColumns)}), but reminders are written with ON CONFLICT (id) and require a single-column primary key on id. A composite key - a TimescaleDB hypertable partitioned on mt_created_at, for example - fails every reminder write with PostgreSQL 42P10. Apply platform migration 002-orleans-reminders-regular-document-table.");
         }
 
-        const string sql = """
-            SELECT create_hypertable(
-                @qualifiedTableName::regclass,
-                'mt_created_at',
-                chunk_time_interval => @chunkInterval::interval,
-                if_not_exists => TRUE,
-                migrate_data => TRUE)
-            """;
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var command = CreateCommand(connection, sql);
-        AddText(command, "qualifiedTableName", _qualifiedMartenTable);
-        AddInterval(command, "chunkInterval", _options.TimescaleChunkInterval);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        _logger.LogInformation(
+            "Elyfe Marten reminder table initialized. Schema={Schema} Table={Table} PrimaryKey={PrimaryKey}",
+            _options.SchemaName,
+            tableName,
+            primaryKeyColumns);
     }
 
     private NpgsqlCommand CreateCommand(NpgsqlConnection connection, string sql)
@@ -230,20 +214,5 @@ public sealed class ElyfeMartenReminderTable : IReminderTable
     private static void AddText(NpgsqlCommand command, string name, string value)
     {
         command.Parameters.Add(new NpgsqlParameter(name, NpgsqlDbType.Text) { Value = value });
-    }
-
-    private static void AddInterval(NpgsqlCommand command, string name, TimeSpan value)
-    {
-        command.Parameters.Add(new NpgsqlParameter(name, NpgsqlDbType.Interval) { Value = value });
-    }
-
-    private static string QuoteIdentifier(string identifier)
-    {
-        if (identifier.Length == 0)
-        {
-            throw new ArgumentException("Identifier cannot be empty.", nameof(identifier));
-        }
-
-        return "\"" + identifier.Replace("\"", "\"\"") + "\"";
     }
 }

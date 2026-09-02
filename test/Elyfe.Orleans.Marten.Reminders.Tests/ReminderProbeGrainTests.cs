@@ -136,11 +136,6 @@ public sealed class ReminderProbeSiloConfigurator : ISiloConfigurator
             options.AutoCreateSchemaObjects = AutoCreate.CreateOrUpdate;
         });
 
-        siloBuilder.UseElyfeMartenReminderService(options =>
-        {
-            options.ConnectionString = ConnectionString;
-            options.AutoCreateSchema = true;
-            options.PreferTimescale = false;
-        });
+        siloBuilder.UseElyfeMartenReminderService(options => options.AutoCreateSchema = true);
     }
 }

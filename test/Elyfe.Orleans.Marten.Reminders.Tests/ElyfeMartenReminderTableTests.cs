@@ -35,7 +35,7 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
         await _postgreSqlContainer.StartAsync();
         _documentStore = CreateDocumentStore();
         await _documentStore.Storage.ApplyAllConfiguredChangesToDatabaseAsync(AutoCreate.CreateOrUpdate);
-        _table = CreateTable(autoCreateSchema: true, preferTimescale: true);
+        _table = CreateTable(autoCreateSchema: true);
         await _table.Init();
     }
 
@@ -148,7 +148,7 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
         };
 
         await Table.UpsertRow(entry);
-        var restartedTable = CreateTable(autoCreateSchema: false, preferTimescale: true);
+        var restartedTable = CreateTable(autoCreateSchema: false);
         await restartedTable.Init();
 
         var byGrain = await restartedTable.ReadRows(grainId);
@@ -170,7 +170,7 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
             Period = TimeSpan.FromMinutes(10)
         });
 
-        var otherServiceTable = CreateTable(autoCreateSchema: false, preferTimescale: true, serviceId: "other-service");
+        var otherServiceTable = CreateTable(autoCreateSchema: false, serviceId: "other-service");
         await otherServiceTable.Init();
         await otherServiceTable.UpsertRow(new ReminderEntry
         {
@@ -241,7 +241,7 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
             StartAt = DateTime.UtcNow.AddMinutes(5),
             Period = TimeSpan.FromMinutes(10)
         });
-        var otherServiceTable = CreateTable(autoCreateSchema: false, preferTimescale: true, serviceId: "clear-other-service");
+        var otherServiceTable = CreateTable(autoCreateSchema: false, serviceId: "clear-other-service");
         await otherServiceTable.Init();
         await otherServiceTable.UpsertRow(new ReminderEntry
         {
@@ -325,8 +325,7 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
             var services = new ServiceCollection();
             services.AddSingleton(store);
             services.AddLogging();
-            services.AddElyfeMartenReminderStore<DocumentStore>(options =>
-                options.ConnectionString = _postgreSqlContainer.GetConnectionString());
+            services.AddElyfeMartenReminderStore<DocumentStore>();
 
             services.Should().NotContain(
                 descriptor => descriptor.ServiceType == typeof(IReminderTable),
@@ -336,8 +335,8 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
                 new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
 
             provider.GetService<IReminderTable>().Should().BeNull();
-            provider.GetRequiredService<IOptions<ElyfeMartenReminderOptions>>().Value.ConnectionString
-                .Should().NotBeNullOrWhiteSpace("the store registration still configures options");
+            provider.GetRequiredService<IOptions<ElyfeMartenReminderOptions>>().Value.DocumentAlias
+                .Should().Be("orleans_reminders", "the store registration still configures options");
         }
         finally
         {
@@ -357,16 +356,11 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
             "silo hosts keep getting the reminder table from the service registration");
     }
 
-    private ElyfeMartenReminderTable CreateTable(bool autoCreateSchema, bool preferTimescale, string serviceId = "test-service")
+    private ElyfeMartenReminderTable CreateTable(bool autoCreateSchema, string serviceId = "test-service")
     {
         return new ElyfeMartenReminderTable(
             new ElyfeMartenReminderDefaultStore(DocumentStore),
-            Options.Create(new ElyfeMartenReminderOptions
-            {
-                ConnectionString = _postgreSqlContainer.GetConnectionString(),
-                AutoCreateSchema = autoCreateSchema,
-                PreferTimescale = preferTimescale
-            }),
+            Options.Create(new ElyfeMartenReminderOptions { AutoCreateSchema = autoCreateSchema }),
             Options.Create(new ClusterOptions
             {
                 ServiceId = serviceId,
