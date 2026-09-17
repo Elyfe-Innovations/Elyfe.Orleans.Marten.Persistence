@@ -108,6 +108,54 @@ siloBuilder.AddMartenGrainStorage("EventsStorage");
 
 With `UseTenantPerStorage = true`, each storage provider will create Marten sessions scoped to that storage name as the tenant identifier. This provides complete data isolation at the database level using Marten's multi-tenancy capabilities.
 
+### Canonical durable state
+
+Use canonical durable state only after migrating a public state type to the provider's canonical document
+identity. The mode bypasses Redis and write-behind for that type, commits every mutation synchronously,
+and uses Marten optimistic concurrency.
+
+Register the state type in the options used by the provider that serves the grain:
+
+```csharp
+siloBuilder.AddMartenGrainStorage<ISmsMartenStore>("sms");
+siloBuilder.ConfigureServices(services =>
+{
+    services.Configure<MartenStorageOptions>(options =>
+        options.EnableCanonicalDurableState<MyGrainState>());
+});
+```
+
+Map the wrapper document as a regular keyed Marten table with optimistic concurrency:
+
+```csharp
+services.AddMartenStore<ISmsMartenStore>(options =>
+{
+    options.Schema.For<MartenGrainData<MyGrainState>>()
+        .DatabaseSchemaName("sms")
+        .DocumentAlias("my_grain_states")
+        .UseOptimisticConcurrency(true);
+});
+```
+
+The state type must be `public`. Do not combine this mode with conjoined tenancy or a TimescaleDB
+hypertable: the provider addresses one regular document row by its canonical ID.
+
+Cut over existing state before enabling the option:
+
+1. Stop writers for the affected state type.
+2. Back up the table and generate the target schema through Marten's migration tooling.
+3. Reconcile each legacy row to the canonical ID produced from the Orleans `ServiceId` and grain ID.
+   Populate `mt_version` and non-null creation metadata for every canonical row. Resolve duplicate legacy
+   identities explicitly; do not rely on provider read fallback.
+4. Add the regular primary key and optimistic-concurrency columns required by the mapping, then validate
+   the migrated rows against the generated schema.
+5. Deploy the mapping and `EnableCanonicalDurableState<T>()` registration together.
+6. Read and update representative grains after restart before deleting the backup or retained legacy rows.
+
+Canonical reads intentionally ignore legacy IDs. A canonical row without creation metadata is rejected,
+and stale writes or clears fail with `InconsistentStateException`; these checks prevent an incomplete
+migration from silently replacing state.
+
 ## Configuration
 
 ### appsettings.json
