@@ -2,6 +2,7 @@ using Elyfe.Orleans.Marten.Persistence.Abstractions;
 using Elyfe.Orleans.Marten.Persistence.Options;
 using JasperFx;
 using Marten;
+using Marten.Internal.Sessions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -34,6 +35,8 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     private readonly Serializer? _serializer;
     private readonly IActivatorProvider? _activatorProvider;
     private readonly ActivitySource _activitySource = new("Elyfe.Orleans.Marten.Persistence");
+    // The state bridge is activation-owned. Weak keys bound metadata to its lifetime, not grain IDs.
+    private readonly ConditionalWeakTable<object, CanonicalStateMetadata> _canonicalMetadata = new();
 
     public MartenGrainStorage(string storageName,
         IDocumentStore documentStore,
@@ -58,6 +61,12 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     {
         using var activity = CreateLinkedDbActivity($"{_storageName}.ClearStateAsync", grainType);
         _logger.LogTrace($"Clearing state for grain {grainId} of type {grainType}.");
+
+        if (_martenOptions.IsCanonicalDurableState<T>())
+        {
+            await ClearCanonicalStateAsync(grainId, grainState);
+            return;
+        }
 
         var id = GenerateId(grainId);
 
@@ -117,6 +126,12 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         {
             if (_logger.IsEnabled(LogLevel.Trace))
                 _logger.LogTrace($"Reading state for grain {grainId} of type {typeof(T).Name}.");
+
+            if (_martenOptions.IsCanonicalDurableState<T>())
+            {
+                await ReadCanonicalStateAsync(grainId, grainState);
+                return;
+            }
 
             if (!typeof(T).IsVisible)
             {
@@ -240,6 +255,12 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         {
             if (_logger.IsEnabled(LogLevel.Trace))
                 _logger.LogTrace($"Writing state for grain {grainId} of type {grainType}.");
+
+            if (_martenOptions.IsCanonicalDurableState<T>())
+            {
+                await WriteCanonicalStateAsync(grainId, grainState);
+                return;
+            }
 
             var isOpaque = !typeof(T).IsVisible;
             if (isOpaque && grainState.State is null)
@@ -409,6 +430,153 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             activity?.Stop();
         }
     }
+
+    private sealed record CanonicalStateMetadata(string Id, DateTimeOffset CreatedAt, Guid Version);
+
+    private async Task ReadCanonicalStateAsync<T>(GrainId grainId, IGrainState<T> grainState)
+    {
+        await using var session = OpenCanonicalSession<T>();
+        var id = GenerateId(grainId);
+        var document = await session.LoadAsync<MartenGrainData<T>>(id);
+        if (document is null)
+        {
+            grainState.State = CreateDefaultState<T>();
+            grainState.RecordExists = false;
+            grainState.ETag = null;
+            _canonicalMetadata.Remove(grainState);
+            return;
+        }
+
+        if (document.CreatedAt == default)
+            throw new InvalidOperationException($"Canonical grain {grainId} has no creation metadata; complete the migration before cutover.");
+
+        var version = RequiredVersion(session, document);
+        RememberCanonicalState(grainState, id, document.CreatedAt, version);
+        grainState.State = document.Data;
+        grainState.RecordExists = true;
+        grainState.ETag = version.ToString("D");
+    }
+
+    private async Task WriteCanonicalStateAsync<T>(GrainId grainId, IGrainState<T> grainState)
+    {
+        var id = GenerateId(grainId);
+        var metadata = RequireCanonicalMetadata(grainState, id);
+        var document = MartenGrainData<T>.Create(grainState.State, id);
+        if (metadata is not null)
+            document.CreatedAt = metadata.CreatedAt;
+
+        await using var session = OpenCanonicalSession<T>();
+        if (metadata is null)
+            session.Insert(document);
+        else
+            QueueCanonicalUpdate(session, document, metadata.Version);
+
+        await SaveCanonicalChangesAsync(session, grainId);
+        var version = RequiredVersion(session, document);
+        RememberCanonicalState(grainState, id, document.CreatedAt, version);
+        grainState.ETag = version.ToString("D");
+        grainState.RecordExists = true;
+    }
+
+    private async Task ClearCanonicalStateAsync<T>(GrainId grainId, IGrainState<T> grainState)
+    {
+        var id = GenerateId(grainId);
+        var metadata = RequireCanonicalMetadata(grainState, id);
+        if (metadata is not null)
+        {
+            await using var session = OpenCanonicalSession<T>();
+            var document = MartenGrainData<T>.Create(grainState.State, id);
+            document.CreatedAt = metadata.CreatedAt;
+            // The conditional UPDATE locks the row; the DELETE is in the same transaction.
+            // Delete(id) would purge the queued update. DeleteWhere preserves the CAS operation.
+            QueueCanonicalUpdate(session, document, metadata.Version);
+            session.DeleteWhere<MartenGrainData<T>>(state => state.Id == id);
+            await SaveCanonicalChangesAsync(session, grainId);
+        }
+
+        grainState.State = CreateDefaultState<T>();
+        grainState.RecordExists = false;
+        grainState.ETag = null;
+        _canonicalMetadata.Remove(grainState);
+    }
+
+    private IDocumentSession OpenCanonicalSession<T>()
+    {
+        var session = _martenOptions.UseTenantPerStorage
+            ? _documentStore.LightweightSession(_storageName)
+            : _documentStore.LightweightSession();
+        try
+        {
+            if (!((QuerySession)session).StorageFor<MartenGrainData<T>>().UseOptimisticConcurrency)
+                throw new InvalidOperationException($"Canonical state {typeof(T)} requires UseOptimisticConcurrency(true) on its MartenGrainData mapping.");
+            return session;
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
+    }
+
+    private static void QueueCanonicalUpdate<T>(IDocumentSession session, MartenGrainData<T> document, Guid version)
+    {
+        // Marten 9.22 UpdateExpectedVersion queues an UPSERT, which resurrects a deleted row.
+        // Use the same Marten version tracking but queue its UPDATE-only operation instead.
+        var martenSession = (DocumentSessionBase)session;
+        var storage = martenSession.StorageFor<MartenGrainData<T>>();
+        storage.Store(martenSession, document, version);
+        session.QueueOperation(storage.Update(document, martenSession, session.TenantId));
+    }
+
+    private CanonicalStateMetadata? RequireCanonicalMetadata<T>(IGrainState<T> grainState, string id)
+    {
+        if (!grainState.RecordExists && grainState.ETag is null)
+        {
+            if (_canonicalMetadata.TryGetValue(grainState, out _))
+                throw new InconsistentStateException("Canonical state metadata was reset without a read or clear.");
+            return null;
+        }
+
+        if (!grainState.RecordExists ||
+            !_canonicalMetadata.TryGetValue(grainState, out var metadata) ||
+            metadata.Id != id ||
+            !Guid.TryParse(grainState.ETag, out var version) ||
+            metadata.Version != version)
+            throw new InconsistentStateException("Canonical state must be read by this activation before updating or clearing an existing record.");
+
+        return metadata;
+    }
+
+    private void RememberCanonicalState<T>(IGrainState<T> grainState, string id, DateTimeOffset createdAt, Guid version)
+    {
+        _canonicalMetadata.Remove(grainState);
+        _canonicalMetadata.Add(grainState, new CanonicalStateMetadata(id, createdAt, version));
+    }
+
+    private static Guid RequiredVersion<T>(IQuerySession session, MartenGrainData<T> document) =>
+        session.VersionFor(document) is { } version && version != Guid.Empty
+            ? version
+            : throw new InvalidOperationException("Canonical storage requires a Marten optimistic concurrency version.");
+
+    private static async Task SaveCanonicalChangesAsync(IDocumentSession session, GrainId grainId)
+    {
+        try
+        {
+            await session.SaveChangesAsync();
+        }
+        catch (Exception exception) when (IsCanonicalConcurrencyFailure(exception))
+        {
+            throw new InconsistentStateException($"Canonical state for grain {grainId} changed concurrently.", exception);
+        }
+    }
+
+    private static bool IsCanonicalConcurrencyFailure(Exception exception) => exception switch
+    {
+        ConcurrencyException => true,
+        DocumentAlreadyExistsException => true,
+        AggregateException aggregate => aggregate.InnerExceptions.Any(IsCanonicalConcurrencyFailure),
+        _ => false
+    };
 
     private async Task ReadOpaqueStateAsync<T>(
         IQuerySession session,
