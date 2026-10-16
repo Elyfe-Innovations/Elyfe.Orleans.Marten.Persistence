@@ -63,7 +63,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
 
         Assert.False(state.RecordExists);
         Assert.Null(state.ETag);
-        Assert.Equal(string.Empty, state.State.Name);
+        Assert.Equal(string.Empty, state.State!.Name);
         Assert.Equal(1, _sessions.Sum(session => session.RequestCount));
         _sessions.Clear();
         state.State.Name = "accepted";
@@ -74,7 +74,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         var reactivated = new GrainState<TestState>();
         await CreateStorage().ReadStateAsync("state", id, reactivated);
         Assert.True(reactivated.RecordExists);
-        Assert.Equal("accepted", reactivated.State.Name);
+        Assert.Equal("accepted", reactivated.State!.Name);
         Assert.Equal(state.ETag, reactivated.ETag);
         await AssertLegacyRowsRemain(id);
     }
@@ -104,7 +104,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         var newProvider = CreateStorage();
         var reactivated = new GrainState<TestState>();
         await newProvider.ReadStateAsync("state", id, reactivated);
-        reactivated.State.Name = "reactivated";
+        reactivated.State!.Name = "reactivated";
         await newProvider.WriteStateAsync("state", id, reactivated);
         await using var query = _store.QuerySession();
         var stored = await query.LoadAsync<MartenGrainData<TestState>>(CanonicalId(id));
@@ -126,7 +126,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         var winner = results[0] is null ? first : second;
         var stored = new GrainState<TestState>();
         await _storage.ReadStateAsync("state", id, stored);
-        Assert.Equal(winner.State.Name, stored.State.Name);
+        Assert.Equal(winner.State!.Name, stored.State!.Name);
         Assert.Equal(winner.ETag, stored.ETag);
     }
 
@@ -141,8 +141,8 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         await _storage.ReadStateAsync("state", id, first);
         await otherProvider.ReadStateAsync("state", id, second);
         var oldEtag = first.ETag;
-        first.State.Name = "first";
-        second.State.Name = "second";
+        first.State!.Name = "first";
+        second.State!.Name = "second";
 
         var results = await Task.WhenAll(
             Record.ExceptionAsync(() => _storage.WriteStateAsync("state", id, first)),
@@ -155,7 +155,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         Assert.Equal(oldEtag, loser.ETag);
         var stored = new GrainState<TestState>();
         await _storage.ReadStateAsync("state", id, stored);
-        Assert.Equal(winner.State.Name, stored.State.Name);
+        Assert.Equal(winner.State!.Name, stored.State!.Name);
         Assert.Equal(winner.ETag, stored.ETag);
     }
 
@@ -177,7 +177,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         Assert.Equal(staleEtag, stale.ETag);
         var stored = new GrainState<TestState>();
         await _storage.ReadStateAsync("state", id, stored);
-        Assert.Equal("newer", stored.State.Name);
+        Assert.Equal("newer", stored.State!.Name);
         Assert.Equal(current.ETag, stored.ETag);
     }
 
@@ -195,7 +195,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         Assert.Null(current.ETag);
         Assert.Equal(string.Empty, current.State.Name);
 
-        stale.State.Name = "resurrection";
+        stale.State!.Name = "resurrection";
         await Assert.ThrowsAsync<InconsistentStateException>(() => _storage.WriteStateAsync("state", id, stale));
         await Assert.ThrowsAsync<InconsistentStateException>(() => _storage.ClearStateAsync("state", id, stale));
         var reactivated = new GrainState<TestState>();
@@ -208,7 +208,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         await _storage.WriteStateAsync("state", id, current);
         await Assert.ThrowsAsync<InconsistentStateException>(() => _storage.ClearStateAsync("state", id, stale));
         await _storage.ReadStateAsync("state", id, reactivated);
-        Assert.Equal("new lifecycle", reactivated.State.Name);
+        Assert.Equal("new lifecycle", reactivated.State!.Name);
     }
 
     [Fact]
@@ -229,7 +229,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         await _storage.WriteStateAsync("state", id, reconstructed);
         var read = new GrainState<TestState>();
         await _storage.ReadStateAsync("state", id, read);
-        Assert.Equal("reloaded", read.State.Name);
+        Assert.Equal("reloaded", read.State!.Name);
     }
 
     [Fact]
@@ -243,7 +243,7 @@ public sealed class MartenCanonicalDurableStorageTests : IAsyncLifetime
         await _storage.ClearStateAsync("state", id, missing);
         var read = new GrainState<TestState>();
         await _storage.ReadStateAsync("state", id, read);
-        Assert.Equal("created later", read.State.Name);
+        Assert.Equal("created later", read.State!.Name);
     }
 
     [Fact]

@@ -284,7 +284,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
             }
             else
             {
-                state = MartenGrainData<T>.Create(grainState.State, id);
+                state = MartenGrainData<T>.Create(grainState.State!, id);
                 newETag = state.Etag;
                 lastModified = state.LastModified.ToUnixTimeMilliseconds();
             }
@@ -461,7 +461,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
     {
         var id = GenerateId(grainId);
         var metadata = RequireCanonicalMetadata(grainState, id);
-        var document = MartenGrainData<T>.Create(grainState.State, id);
+        var document = MartenGrainData<T>.Create(grainState.State!, id);
         if (metadata is not null)
             document.CreatedAt = metadata.CreatedAt;
 
@@ -485,7 +485,7 @@ public class MartenGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLife
         if (metadata is not null)
         {
             await using var session = OpenCanonicalSession<T>();
-            var document = MartenGrainData<T>.Create(grainState.State, id);
+            var document = MartenGrainData<T>.Create(grainState.State!, id);
             document.CreatedAt = metadata.CreatedAt;
             // The conditional UPDATE locks the row; the DELETE is in the same transaction.
             // Delete(id) would purge the queued update. DeleteWhere preserves the CAS operation.

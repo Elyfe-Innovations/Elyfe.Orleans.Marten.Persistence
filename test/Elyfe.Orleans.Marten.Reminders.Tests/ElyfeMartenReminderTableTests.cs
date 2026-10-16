@@ -110,7 +110,7 @@ public sealed class ElyfeMartenReminderTableTests : IAsyncLifetime
         var etag = await Table.UpsertRow(entry);
 
         var staleRemoved = await Table.RemoveRow(grainId, "payment", "stale");
-        var removed = await Table.RemoveRow(grainId, "payment", etag);
+        var removed = await Table.RemoveRow(grainId, "payment", etag!);
         var stored = await Table.ReadRow(grainId, "payment");
 
         staleRemoved.Should().BeFalse();
