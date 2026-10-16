@@ -89,7 +89,7 @@ public sealed class ElyfeMartenReminderTable : IReminderTable
         return document is null || document.ServiceId != ServiceId ? null : document.ToReminderEntry();
     }
 
-    public async Task<string> UpsertRow(ReminderEntry entry)
+    public async Task<string?> UpsertRow(ReminderEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
         ArgumentException.ThrowIfNullOrWhiteSpace(entry.ReminderName);

@@ -168,7 +168,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
 
         var cachedRead = new GrainState<InternalTestState>();
         await storage.ReadStateAsync("InternalTestState", grainId, cachedRead);
-        cachedRead.State.Name.Should().Be("opaque-overflow");
+        cachedRead.State!.Name.Should().Be("opaque-overflow");
         cachedRead.State.Value.Should().Be(91);
 
         var drainer = (CacheToMartenWriter)serviceProvider.GetService(typeof(CacheToMartenWriter))!;
@@ -191,7 +191,7 @@ public class WriteBehindIntegrationTests : IAsyncLifetime
         await drainer.StopAsync(CancellationToken.None);
 
         document.Should().NotBeNull();
-        var persistedState = serviceProvider.Serializer.Deserialize<InternalTestState>(document!.Data);
+        var persistedState = serviceProvider.Serializer.Deserialize<InternalTestState>(document!.Data)!;
         persistedState.Name.Should().Be("opaque-overflow");
         persistedState.Value.Should().Be(91);
 
